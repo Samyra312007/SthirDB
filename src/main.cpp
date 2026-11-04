@@ -30,9 +30,14 @@ void PrintUsage() {
       "  sthirdb                     Print this help and exit (status 0).\n"
       "  sthirdb --version           Print version and exit.\n"
       "  sthirdb run \"<sql>\"         Execute a SQL query, DDL, or DML statement.\n"
-      "  sthirdb explain \"<sql>\"     Plan tree with estimated rows/cost + rejected paths.\n"
-      "  sthirdb optimizer \"<sql>\"   Chosen plan, estimated cost/rows and actual time.\n"
+      "  sthirdb explain [--constraint-aware on|off] \"<sql>\"\n"
+      "                             Plan tree, estimated rows/cost, rejected paths,\n"
+      "                             and every constraint-aware rule that fired.\n"
+      "  sthirdb optimizer [--seq|--index] [--constraint-aware on|off] \"<sql>\"\n"
+      "                             Chosen plan, estimated cost/rows, actual time.\n"
       "                             --seq / --index force one access path (measurement).\n"
+      "                             --constraints on|off selects the schema mode.\n"
+
       "  sthirdb analyze <table>     Refresh and persist column statistics.\n"
       "  sthirdb init_schema         Create ./data/retail and the Items table file.\n"
       "  sthirdb load_data --rows N  Bulk-insert N rows into Items.\n"
@@ -178,7 +183,15 @@ int CmdCount() {
   return 0;
 }
 
-int RunSql(const std::string& sql) {
+// Per-process session flags. A `SET` statement works inside one `sql` run, but
+// each CLI invocation is a fresh session, so the shell demos pass the same
+// flags on the command line.
+struct SessionOpts {
+  std::string constraints;        // "on" | "off" | "" (leave default)
+  std::string constraint_aware;   // "on" | "off" | "" (leave default)
+};
+
+int RunSql(const std::string& sql, const SessionOpts& opts = SessionOpts()) {
   sthir::Catalog catalog(sthir::kCatalogPath);
   std::string err;
   if (!catalog.Load(&err)) {
@@ -186,17 +199,55 @@ int RunSql(const std::string& sql) {
     return 1;
   }
   sthir::ExecutionEngine engine(&catalog, sthir::kDataDir);
+  if (!opts.constraints.empty()) engine.SetSessionFlag("constraints_enabled", opts.constraints);
+  if (!opts.constraint_aware.empty()) {
+    engine.SetSessionFlag("constraint_aware", opts.constraint_aware);
+  }
   auto res = engine.Execute(sql);
   res.PrintTable(std::cout);
   return res.success ? 0 : 1;
 }
 
-int CmdRun(const std::string& sql) { return RunSql(sql); }
+// Splits `--flag value` pairs (on|off only) from the trailing SQL argument.
+bool ParseOnOffFlag(int argc, char** argv, const char* name, std::string* out,
+                    std::string* sql) {
+  for (int i = 2; i < argc; ++i) {
+    const std::string a = argv[i];
+    if (a == name) {
+      if (i + 1 >= argc) return false;
+      *out = argv[++i];
+      if (*out != "on" && *out != "off") return false;
+    } else {
+      *sql = a;
+    }
+  }
+  return !sql->empty();
+}
+
+int CmdRun(int argc, char** argv) {
+  SessionOpts opts;
+  std::string sql;
+  if (!ParseOnOffFlag(argc, argv, "--constraints", &opts.constraints, &sql) ||
+      !ParseOnOffFlag(argc, argv, "--constraint-aware", &opts.constraint_aware, &sql)) {
+    std::fprintf(stderr, "run: expected 'run [--constraints on|off]"
+                         " [--constraint-aware on|off] \"<sql>\"'\n");
+    return 2;
+  }
+  return RunSql(sql, opts);
+}
 
 // EXPLAIN "<sql>": plan tree, predicted rows/cost per node, rejected candidates.
-int CmdExplain(const std::string& sql) {
-  if (sql.size() >= 7 && sql.compare(0, 7, "EXPLAIN") == 0) return RunSql(sql);
-  return RunSql("EXPLAIN " + sql);
+int CmdExplain(int argc, char** argv) {
+  SessionOpts opts;
+  std::string sql;
+  if (!ParseOnOffFlag(argc, argv, "--constraints", &opts.constraints, &sql) ||
+      !ParseOnOffFlag(argc, argv, "--constraint-aware", &opts.constraint_aware, &sql)) {
+    std::fprintf(stderr, "explain: expected 'explain [--constraints on|off]"
+                         " [--constraint-aware on|off] \"<sql>\"'\n");
+    return 2;
+  }
+  if (sql.size() >= 7 && sql.compare(0, 7, "EXPLAIN") == 0) return RunSql(sql, opts);
+  return RunSql("EXPLAIN " + sql, opts);
 }
 
 // ANALYZE <table>: refresh and persist column statistics.
@@ -209,7 +260,23 @@ int CmdAnalyze(const std::string& table) {
 }
 
 // optimizer "<sql>": chosen plan, estimated cost/rows, actual time and rows.
-int CmdOptimizer(const std::string& sql, bool force_seq = false, bool force_index = false) {
+int CmdOptimizer(int argc, char** argv, const SessionOpts& opts, bool force_seq = false,
+                 bool force_index = false) {
+  std::string sql;
+  for (int i = 2; i < argc; ++i) {
+    const std::string a = argv[i];
+    if (a == "--seq" || a == "--index" || a == "--constraints" ||
+        a == "--constraint-aware") {
+      if (a == "--constraints" || a == "--constraint-aware") ++i;  // value consumed
+      continue;
+    }
+    sql = a;
+  }
+  if (sql.empty()) {
+    std::fprintf(stderr, "optimizer: expected 'optimizer [--seq|--index]"
+                         " [--constraints on|off] [--constraint-aware on|off] \"<sql>\"'\n");
+    return 2;
+  }
   sthir::Catalog catalog(sthir::kCatalogPath);
   std::string err;
   if (!catalog.Load(&err)) {
@@ -217,6 +284,10 @@ int CmdOptimizer(const std::string& sql, bool force_seq = false, bool force_inde
     return 1;
   }
   sthir::ExecutionEngine engine(&catalog, sthir::kDataDir);
+  if (!opts.constraints.empty()) engine.SetSessionFlag("constraints_enabled", opts.constraints);
+  if (!opts.constraint_aware.empty()) {
+    engine.SetSessionFlag("constraint_aware", opts.constraint_aware);
+  }
   // Measurement hooks: run the same query on a forced path to compare runtimes.
   if (force_seq) engine.SetSessionFlag("enable_index_scan", "off");
   if (force_index) engine.SetSessionFlag("enable_seq_scan", "off");
@@ -603,29 +674,40 @@ int main(int argc, char** argv) {
     return 0;
   }
   if (cmd == "run") {
-    if (argc != 3) {
+    if (argc < 3) {
       std::fprintf(stderr, "run: expected 'sthirdb run \"<sql>\"'\n");
       return 2;
     }
-    return CmdRun(argv[2]);
+    return CmdRun(argc, argv);
   }
   if (cmd == "explain") {
-    if (argc != 3) {
-      std::fprintf(stderr, "explain: expected 'sthirdb explain \"<sql>\"'\n");
-      return 2;
-    }
-    return CmdExplain(argv[2]);
+    return CmdExplain(argc, argv);
   }
   if (cmd == "optimizer") {
-    if (argc == 3) return CmdOptimizer(argv[2]);
-    if (argc == 4) {
-      const std::string flag = argv[2];
-      if (flag == "--seq") return CmdOptimizer(argv[3], true, false);
-      if (flag == "--index") return CmdOptimizer(argv[3], false, true);
+    bool force_seq = false;
+    bool force_index = false;
+    SessionOpts opts;
+    for (int i = 2; i < argc; ++i) {
+      const std::string a = argv[i];
+      if (a == "--seq") {
+        force_seq = true;
+      } else if (a == "--index") {
+        force_index = true;
+      } else if (a == "--constraints" && i + 1 < argc) {
+        opts.constraints = argv[++i];
+        if (opts.constraints != "on" && opts.constraints != "off") {
+          std::fprintf(stderr, "optimizer: --constraints expects on|off\n");
+          return 2;
+        }
+      } else if (a == "--constraint-aware" && i + 1 < argc) {
+        opts.constraint_aware = argv[++i];
+        if (opts.constraint_aware != "on" && opts.constraint_aware != "off") {
+          std::fprintf(stderr, "optimizer: --constraint-aware expects on|off\n");
+          return 2;
+        }
+      }
     }
-    std::fprintf(stderr,
-                 "optimizer: expected 'sthirdb optimizer [--seq|--index] \"<sql>\"'\n");
-    return 2;
+    return CmdOptimizer(argc, argv, opts, force_seq, force_index);
   }
   if (cmd == "analyze") {
     if (argc != 3) {
