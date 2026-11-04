@@ -4,6 +4,7 @@
 #include <cctype>
 
 #include "index/index_scan.h"
+#include "optimizer/constraint_rules.h"
 #include "optimizer/optimizer.h"
 
 namespace sthir {
@@ -375,20 +376,63 @@ std::unique_ptr<PlanNode> Planner::PlanSelect(const SelectStmt& stmt, std::strin
     }
   }
 
+  // Phase 4B: constraint-aware rewrite of the pushed predicates, run before
+  // any plan is costed so the access-path choice sees the rewritten predicate.
+  // Rules fire only when both flags are on (see constraint_rules.h).
+  const bool rules_active = constraint_aware_ && constraints_enforced_;
+  std::vector<std::string> fired;
+  std::vector<bool> input_empty(inputs.size(), false);
+  std::vector<bool> unique_lookup(inputs.size(), false);
+  if (rules_active) {
+    for (size_t i = 0; i < inputs.size(); ++i) {
+      if (!inputs[i].pushed) continue;
+      const TableSchema& input_schema = *inputs[i].schema;
+      // R2b drops conjuncts the CHECK makes tautological.
+      inputs[i].pushed = StripImpliedConjuncts(catalog_, input_schema,
+                                               std::move(inputs[i].pushed), &fired);
+      if (!inputs[i].pushed) continue;
+      const PredicateFinding finding =
+          AnalyzeConstraintPredicate(catalog_, input_schema, inputs[i].pushed.get());
+      if (finding.rewrite == PredicateRewrite::CONTRADICTION) {
+        input_empty[i] = true;
+        fired.push_back(finding.detail);
+      } else if (finding.rewrite == PredicateRewrite::UNIQUE_LOOKUP) {
+        unique_lookup[i] = true;
+        fired.push_back(finding.detail);
+      }
+    }
+  }
+
   // Build the input plans (each with its pushed filter and access-path choice)
-  // and chain one NestedLoopJoin per JOIN clause.
-  AccessPathChoice first =
-      ChooseAccessPath(*inputs[0].schema, inputs[0].pushed.get(),
-                       allow_index_scan_, allow_seq_scan_);
-  std::unique_ptr<PlanNode> current_plan = std::move(first.plan);
-  std::string chosen_path = first.name;
-  std::vector<PlanAlternative> rejected_paths = first.rejected;
+  // and chain one join per JOIN clause.
+  std::unique_ptr<PlanNode> current_plan;
+  std::string chosen_path;
+  std::vector<PlanAlternative> rejected_paths;
+  if (input_empty[0]) {
+    current_plan = std::make_unique<EmptyResultPlan>(*inputs[0].schema);
+    chosen_path = "EmptyResult (0 pages)";
+  } else {
+    AccessPathChoice first =
+        ChooseAccessPath(*inputs[0].schema, inputs[0].pushed.get(),
+                         allow_index_scan_, allow_seq_scan_, unique_lookup[0]);
+    current_plan = std::move(first.plan);
+    chosen_path = first.name;
+    rejected_paths = first.rejected;
+  }
+  if (unique_lookup[0] && !input_empty[0]) current_plan->set_forced_rows(1.0);
   TableSchema current_schema = *inputs[0].schema;
 
   for (size_t i = 1; i < inputs.size(); ++i) {
-    AccessPathChoice right =
-        ChooseAccessPath(*inputs[i].schema, inputs[i].pushed.get(),
-                         allow_index_scan_, allow_seq_scan_);
+    std::unique_ptr<PlanNode> right_plan;
+    if (input_empty[i]) {
+      right_plan = std::make_unique<EmptyResultPlan>(*inputs[i].schema);
+    } else {
+      AccessPathChoice right =
+          ChooseAccessPath(*inputs[i].schema, inputs[i].pushed.get(),
+                           allow_index_scan_, allow_seq_scan_, unique_lookup[i]);
+      right_plan = std::move(right.plan);
+      if (unique_lookup[i]) right_plan->set_forced_rows(1.0);
+    }
     TableSchema join_schema = MergeJoinSchemas(current_schema, *inputs[i].schema);
     const JoinClause& clause = stmt.joins[i - 1];
 
@@ -400,14 +444,14 @@ std::unique_ptr<PlanNode> Planner::PlanSelect(const SelectStmt& stmt, std::strin
     const size_t key_count =
         ExtractEquiJoinKeys(*clause.on, i, inputs, input_names, &left_keys, &right_keys);
     if (key_count > 0) {
-      AnnotatePlan(current_plan.get());
-      AnnotatePlan(right.plan.get());
+      AnnotatePlan(current_plan.get(), rules_active ? &catalog_ : nullptr, rules_active);
+      AnnotatePlan(right_plan.get(), rules_active ? &catalog_ : nullptr, rules_active);
       const bool build_on_right =
-          right.plan->estimated_rows() <= current_plan->estimated_rows();
+          right_plan->estimated_rows() <= current_plan->estimated_rows();
       current_plan = std::make_unique<HashJoinPlan>(
           CloneExpr(clause.on.get()),
           std::move(current_plan),
-          std::move(right.plan),
+          std::move(right_plan),
           join_schema,
           std::move(left_keys),
           std::move(right_keys),
@@ -416,7 +460,7 @@ std::unique_ptr<PlanNode> Planner::PlanSelect(const SelectStmt& stmt, std::strin
       current_plan = std::make_unique<NestedLoopJoinPlan>(
           CloneExpr(clause.on.get()),
           std::move(current_plan),
-          std::move(right.plan),
+          std::move(right_plan),
           join_schema);
     }
     current_schema = std::move(join_schema);
@@ -511,11 +555,19 @@ std::unique_ptr<PlanNode> Planner::PlanSelect(const SelectStmt& stmt, std::strin
         std::move(current_plan));
   }
 
+  // Phase 4B rule R3: drop an inner join to a parent table whose FK child
+  // column is NOT NULL and none of whose columns are used above the join.
+  if (rules_active) {
+    current_plan = EliminateRedundantJoins(std::move(current_plan), catalog_, &fired);
+  }
+
   // Phase 4: cost every node and record the access-path decision on the root
   // so EXPLAIN can print the chosen plan next to the rejected candidates.
-  AnnotatePlan(current_plan.get());
+  AnnotatePlan(current_plan.get(), rules_active ? &catalog_ : nullptr, rules_active,
+               &fired);
   current_plan->set_access_path(chosen_path);
   current_plan->set_alternatives(std::move(rejected_paths));
+  for (const auto& rule : fired) current_plan->add_applied_rule(rule);
   return current_plan;
 }
 

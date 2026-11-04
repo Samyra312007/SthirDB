@@ -5,6 +5,7 @@
 
 #include "common/config.h"
 #include "index/index_scan.h"
+#include "optimizer/constraint_rules.h"
 #include "optimizer/cost_model.h"
 #include "optimizer/selectivity.h"
 
@@ -60,7 +61,8 @@ double GroupEstimate(const PlanNode* child, const std::vector<std::string>& grou
   return std::min(groups, input_rows);
 }
 
-void AnnotateRec(PlanNode* node) {
+void AnnotateRec(PlanNode* node, const Catalog* catalog, bool constraint_rules,
+                 std::vector<std::string>* fired_rules) {
   if (node == nullptr) return;
 
   switch (node->type()) {
@@ -82,7 +84,7 @@ void AnnotateRec(PlanNode* node) {
     }
     case PlanNodeType::FILTER: {
       auto* filter = static_cast<FilterPlan*>(node);
-      AnnotateRec(filter->child().get());
+      AnnotateRec(filter->child().get(), catalog, constraint_rules, fired_rules);
       const PlanNode* child = filter->child().get();
       // A filter above an index scan rechecks the predicate the range already
       // encoded, so it is estimated to pass everything the scan produced.
@@ -96,13 +98,13 @@ void AnnotateRec(PlanNode* node) {
     }
     case PlanNodeType::PROJECT: {
       auto* project = static_cast<ProjectPlan*>(node);
-      AnnotateRec(project->child().get());
+      AnnotateRec(project->child().get(), catalog, constraint_rules, fired_rules);
       node->set_estimates(project->child().get()->estimated_rows(), project->child().get()->estimated_cost());
       break;
     }
     case PlanNodeType::SORT: {
       auto* sort = static_cast<SortPlan*>(node);
-      AnnotateRec(sort->child().get());
+      AnnotateRec(sort->child().get(), catalog, constraint_rules, fired_rules);
       const double rows = sort->child().get()->estimated_rows();
       node->set_estimates(rows, sort->child().get()->estimated_cost() +
                                     SortCost(rows, EstimatedTupleBytes(node->output_schema())));
@@ -110,7 +112,7 @@ void AnnotateRec(PlanNode* node) {
     }
     case PlanNodeType::AGGREGATE: {
       auto* aggregate = static_cast<AggregatePlan*>(node);
-      AnnotateRec(aggregate->child().get());
+      AnnotateRec(aggregate->child().get(), catalog, constraint_rules, fired_rules);
       const double rows = GroupEstimate(aggregate->child().get(), aggregate->group_by_cols());
       node->set_estimates(rows, AggregateCost(aggregate->child().get()->estimated_cost(),
                                               aggregate->child().get()->estimated_rows()));
@@ -118,12 +120,22 @@ void AnnotateRec(PlanNode* node) {
     }
     case PlanNodeType::NESTED_LOOP_JOIN: {
       auto* join = static_cast<NestedLoopJoinPlan*>(node);
-      AnnotateRec(join->left().get());
-      AnnotateRec(join->right().get());
+      AnnotateRec(join->left().get(), catalog, constraint_rules, fired_rules);
+      AnnotateRec(join->right().get(), catalog, constraint_rules, fired_rules);
       const double outer_rows = join->left().get()->estimated_rows();
       const double inner_rows = join->right().get()->estimated_rows();
       // No column statistics for join predicates yet: conventional 10% default.
-      const double rows = outer_rows * inner_rows * 0.1;
+      // R4 overrides it when the join is a declared FK child->parent edge.
+      double rows = outer_rows * inner_rows * 0.1;
+      if (constraint_rules && catalog != nullptr) {
+        double fk_rows = 0.0;
+        std::string detail;
+        if (FkJoinCardinality(*catalog, join->left().get(), join->right().get(),
+                              join->join_predicate(), &fk_rows, &detail)) {
+          rows = fk_rows;
+          if (fired_rules != nullptr) fired_rules->push_back(detail);
+        }
+      }
       const double cost = join->left().get()->estimated_cost() + join->right().get()->estimated_cost() +
                           NestedLoopJoinCost(join->left().get()->estimated_cost(), outer_rows,
                                              join->right().get()->estimated_cost());
@@ -132,17 +144,30 @@ void AnnotateRec(PlanNode* node) {
     }
     case PlanNodeType::HASH_JOIN: {
       auto* join = static_cast<HashJoinPlan*>(node);
-      AnnotateRec(join->left().get());
-      AnnotateRec(join->right().get());
+      AnnotateRec(join->left().get(), catalog, constraint_rules, fired_rules);
+      AnnotateRec(join->right().get(), catalog, constraint_rules, fired_rules);
       const double outer_rows = join->left().get()->estimated_rows();
       const double inner_rows = join->right().get()->estimated_rows();
       // Same conventional 10% join selectivity as the nested-loop case. Each
       // input is read once (already priced by the children) and the hash
       // table lives in memory, so the join itself adds no page I/O.
-      const double rows = outer_rows * inner_rows * 0.1;
+      double rows = outer_rows * inner_rows * 0.1;
+      if (constraint_rules && catalog != nullptr) {
+        double fk_rows = 0.0;
+        std::string detail;
+        if (FkJoinCardinality(*catalog, join->left().get(), join->right().get(),
+                              join->join_predicate(), &fk_rows, &detail)) {
+          rows = fk_rows;
+          if (fired_rules != nullptr) fired_rules->push_back(detail);
+        }
+      }
       const double cost = join->left().get()->estimated_cost() +
                           join->right().get()->estimated_cost();
       node->set_estimates(rows, cost);
+      break;
+    }
+    case PlanNodeType::EMPTY_RESULT: {
+      node->set_estimates(0.0, 0.0);
       break;
     }
     case PlanNodeType::INSERT: {
@@ -154,10 +179,14 @@ void AnnotateRec(PlanNode* node) {
       PlanNode* child = node->type() == PlanNodeType::UPDATE
                             ? static_cast<UpdatePlan*>(node)->child().get()
                             : static_cast<DeletePlan*>(node)->child().get();
-      AnnotateRec(child);
+      AnnotateRec(child, catalog, constraint_rules, fired_rules);
       node->set_estimates(child->estimated_rows(), child->estimated_cost());
       break;
     }
+  }
+
+  if (node->forced_rows() >= 0.0) {
+    node->set_estimates(node->forced_rows(), node->estimated_cost());
   }
 }
 
@@ -190,7 +219,7 @@ TableSummary SummarizeTable(const TableSchema& schema) {
 }
 
 AccessPathChoice ChooseAccessPath(const TableSchema& schema, const Expr* where,
-                                 bool allow_index, bool allow_seq) {
+                                 bool allow_index, bool allow_seq, bool prefer_index) {
   const TableSummary table = SummarizeTable(schema);
   const double selectivity = where != nullptr ? EstimateSelectivity(where, schema) : 1.0;
   const double output_rows =
@@ -237,8 +266,8 @@ AccessPathChoice ChooseAccessPath(const TableSchema& schema, const Expr* where,
   choice.rows = output_rows;
   bool use_index = false;
   if (index_plan != nullptr) {
-    if (!allow_seq) {
-      use_index = true;  // forced by the measurement hook
+    if (!allow_seq || prefer_index) {
+      use_index = true;  // forced by a measurement hook or by rule R1
     } else if (allow_index && index_cost < seq_cost) {
       use_index = true;
     }
@@ -259,6 +288,9 @@ AccessPathChoice ChooseAccessPath(const TableSchema& schema, const Expr* where,
   return choice;
 }
 
-void AnnotatePlan(PlanNode* plan) { AnnotateRec(plan); }
+void AnnotatePlan(PlanNode* plan, const Catalog* catalog, bool constraint_rules,
+                  std::vector<std::string>* fired_rules) {
+  AnnotateRec(plan, catalog, constraint_rules, fired_rules);
+}
 
 }  // namespace sthir

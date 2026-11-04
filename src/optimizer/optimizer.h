@@ -35,11 +35,21 @@ struct AccessPathChoice {
 // `allow_index` / `allow_seq` exist for measurement and debugging (the CLI's
 // `optimizer --seq|--index` and the SET enable_* flags): disabling a path drops
 // its candidate; if both are disabled SeqScan is used as the fallback.
+// `prefer_index` forces the index candidate when one exists (rule R1: a unique
+// equality is a seek, never a scan). It is ignored when no index can serve the
+// predicate.
 AccessPathChoice ChooseAccessPath(const TableSchema& schema, const Expr* where,
-                                 bool allow_index = true, bool allow_seq = true);
+                                 bool allow_index = true, bool allow_seq = true,
+                                 bool prefer_index = false);
 
 // Bottom-up pass that stamps estimated rows and cost on every plan node.
-void AnnotatePlan(PlanNode* plan);
+//
+// When `constraint_rules` is true (SET constraint_aware = on with constraints
+// enforced) rule R4 replaces the conventional 10% join selectivity with the
+// exact FK-join cardinality rows(child); `catalog` supplies the FK edges.
+void AnnotatePlan(PlanNode* plan, const Catalog* catalog = nullptr,
+                  bool constraint_rules = false,
+                  std::vector<std::string>* fired_rules = nullptr);
 
 // Estimated tuple width in bytes, used by the sort/aggregate cost estimates.
 double EstimatedTupleBytes(const TableSchema& schema);

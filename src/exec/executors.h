@@ -18,6 +18,20 @@
 
 namespace sthir {
 
+class EmptyExecutor : public Executor {
+ public:
+  explicit EmptyExecutor(TableSchema schema) : schema_(std::move(schema)) {}
+
+  void init() override {}
+  std::optional<Tuple> next() override { return std::nullopt; }
+  void close() override {}
+
+  const TableSchema& output_schema() const override { return schema_; }
+
+ private:
+  TableSchema schema_;
+};
+
 class SeqScanExecutor : public Executor {
  public:
   SeqScanExecutor(std::string table_name,

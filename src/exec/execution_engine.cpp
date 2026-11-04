@@ -322,6 +322,9 @@ std::unique_ptr<Executor> ExecutionEngine::BuildExecutorTree(const PlanNode* pla
   if (!plan) return nullptr;
 
   switch (plan->type()) {
+    case PlanNodeType::EMPTY_RESULT: {
+      return std::make_unique<EmptyExecutor>(plan->output_schema());
+    }
     case PlanNodeType::SEQ_SCAN: {
       const auto* scan = static_cast<const SeqScanPlan*>(plan);
       StorageContext* sc = GetStorage(scan->table_name());
@@ -636,7 +639,9 @@ ExecutionResult ExecutionEngine::ExecuteInner(const std::string& sql) {
   if (stmt->type() == StmtType::EXPLAIN) {
     auto* exp = static_cast<ExplainStmt*>(stmt.get());
     Planner planner(*catalog_, GetSessionFlag("enable_index_scan") != "off",
-                    GetSessionFlag("enable_seq_scan") != "off");
+                    GetSessionFlag("enable_seq_scan") != "off",
+                    GetSessionFlag("constraint_aware") == "on",
+                    !ConstraintsFlagOff(GetSessionFlag("constraints_enabled")));
     std::string err;
     auto plan = planner.CreatePlan(*exp->stmt(), &err);
     if (!plan) {
@@ -656,11 +661,17 @@ ExecutionResult ExecutionEngine::ExecuteInner(const std::string& sql) {
                 "  rows=" + FormatCost(alternative.rows) + "\n";
       }
     }
-    // Phase 4B hook: list every constraint-aware rule that fired while
-    // planning. Phase 4 implements no rules, so nothing can fire yet.
+    // Phase 4B: list every constraint-aware rule that fired while planning.
     if (GetSessionFlag("constraint_aware") == "on") {
-      res.rules_line =
-          "Applied rules: (none - constraint-aware rules arrive in Phase 4B)";
+      res.rules_line = "Applied rules: ";
+      if (plan->applied_rules().empty()) {
+        res.rules_line += "(none)";
+      } else {
+        for (size_t i = 0; i < plan->applied_rules().size(); ++i) {
+          if (i > 0) res.rules_line += ", ";
+          res.rules_line += plan->applied_rules()[i];
+        }
+      }
       text += res.rules_line + "\n";
     }
 
@@ -684,7 +695,9 @@ ExecutionResult ExecutionEngine::ExecuteInner(const std::string& sql) {
     constraint_checker_->SetEnabled(!ConstraintsFlagOff(GetSessionFlag("constraints_enabled")));
   }
   Planner planner(*catalog_, GetSessionFlag("enable_index_scan") != "off",
-                  GetSessionFlag("enable_seq_scan") != "off");
+                  GetSessionFlag("enable_seq_scan") != "off",
+                  GetSessionFlag("constraint_aware") == "on",
+                  !ConstraintsFlagOff(GetSessionFlag("constraints_enabled")));
   std::string plan_err;
   auto plan = planner.CreatePlan(*stmt, &plan_err);
   if (!plan) {
@@ -837,8 +850,15 @@ ExecutionResult ExecutionEngine::ExecuteInner(const std::string& sql) {
   res.alternatives = plan->alternatives();
   res.plan_text = plan->ToString();
   if (GetSessionFlag("constraint_aware") == "on") {
-    res.rules_line =
-        "Applied rules: (none - constraint-aware rules arrive in Phase 4B)";
+    res.rules_line = "Applied rules: ";
+    if (plan->applied_rules().empty()) {
+      res.rules_line += "(none)";
+    } else {
+      for (size_t i = 0; i < plan->applied_rules().size(); ++i) {
+        if (i > 0) res.rules_line += ", ";
+        res.rules_line += plan->applied_rules()[i];
+      }
+    }
   }
   res.has_plan_info = true;
 

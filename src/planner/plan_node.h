@@ -22,6 +22,7 @@ enum class PlanNodeType {
   SORT,
   NESTED_LOOP_JOIN,
   HASH_JOIN,
+  EMPTY_RESULT,
   INSERT,
   UPDATE,
   DELETE_NODE
@@ -76,6 +77,20 @@ class PlanNode {
   }
   const std::vector<PlanAlternative>& alternatives() const { return alternatives_; }
 
+  void add_applied_rule(std::string rule) {
+    if (!rule.empty()) applied_rules_.push_back(std::move(rule));
+  }
+  const std::vector<std::string>& applied_rules() const { return applied_rules_; }
+
+  // Constraint-derived hard cardinality override. Used by R1/R4 before
+  // annotate_plan() and preserved through cost-based annotation.
+  void set_forced_rows(double rows) {
+    forced_rows_ = rows;
+    estimated_rows_ = rows;
+    has_estimates_ = true;
+  }
+  double forced_rows() const { return forced_rows_; }
+
  protected:
   static std::string IndentStr(int indent) { return std::string(indent * 2, ' '); }
 
@@ -92,8 +107,10 @@ class PlanNode {
   double estimated_rows_ = 0.0;
   double estimated_cost_ = 0.0;
   bool has_estimates_ = false;
+  double forced_rows_ = -1.0;
   std::string access_path_;
   std::vector<PlanAlternative> alternatives_;
+  std::vector<std::string> applied_rules_;
 };
 
 class SeqScanPlan : public PlanNode {
@@ -350,6 +367,20 @@ class HashJoinPlan : public PlanNode {
   std::vector<std::unique_ptr<Expr>> left_keys_;
   std::vector<std::unique_ptr<Expr>> right_keys_;
   bool build_on_right_ = true;
+};
+
+class EmptyResultPlan : public PlanNode {
+ public:
+  explicit EmptyResultPlan(TableSchema schema) : schema_(std::move(schema)) {}
+
+  PlanNodeType type() const override { return PlanNodeType::EMPTY_RESULT; }
+  const TableSchema& output_schema() const override { return schema_; }
+
+  std::vector<const PlanNode*> children() const override { return {}; }
+  std::string NodeLabel() const override { return "EmptyResult"; }
+
+ private:
+  TableSchema schema_;
 };
 
 class InsertPlan : public PlanNode {
