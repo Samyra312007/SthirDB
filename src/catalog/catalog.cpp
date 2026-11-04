@@ -1,6 +1,7 @@
 #include "catalog/catalog.h"
 
 #include <cctype>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -885,6 +886,140 @@ std::vector<ForeignKeyInfo> Catalog::GetForeignKeysOn(const std::string& table_n
     if (ToLower(info.child_table) == lower) out.push_back(std::move(info));
   }
   return out;
+}
+
+// -------------------------------------------------------------
+// Phase 4B constraint catalog
+// -------------------------------------------------------------
+
+bool Catalog::IsUnique(const std::string& table_name,
+                       const std::vector<std::string>& columns) const {
+  const TableSchema* table = GetTable(table_name);
+  if (table == nullptr || columns.empty()) return false;
+  if (SameColumns(table->primary_key_columns, columns)) return true;
+  for (const auto& group : table->unique_constraints) {
+    if (SameColumns(group, columns)) return true;
+  }
+  return false;
+}
+
+namespace {
+
+// Parses one simple CHECK expression of the form `<column> <op> <number>`.
+// Anything more elaborate (expressions, ANDs, functions) is deliberately
+// rejected: an unparsed CHECK yields no fact, and no fact means no rule fires.
+bool ParseSimpleCheck(const std::string& expr, std::string* column, std::string* op,
+                      double* value) {
+  size_t i = 0;
+  auto skip = [&]() {
+    while (i < expr.size() && std::isspace(static_cast<unsigned char>(expr[i]))) ++i;
+  };
+  skip();
+  const size_t name_start = i;
+  while (i < expr.size() &&
+         (std::isalnum(static_cast<unsigned char>(expr[i])) || expr[i] == '_' || expr[i] == '.')) {
+    ++i;
+  }
+  if (i == name_start) return false;
+  *column = expr.substr(name_start, i - name_start);
+  skip();
+
+  if (i >= expr.size()) return false;
+  const char c = expr[i];
+  if (c == '>') {
+    *op = (i + 1 < expr.size() && expr[i + 1] == '=') ? ">=" : ">";
+  } else if (c == '<') {
+    *op = (i + 1 < expr.size() && expr[i + 1] == '=') ? "<=" : "<";
+  } else if (c == '=') {
+    *op = "=";
+  } else {
+    return false;
+  }
+  i += op->size();
+  skip();
+
+  const char* start = expr.c_str() + i;
+  char* end = nullptr;
+  *value = std::strtod(start, &end);
+  if (end == start) return false;
+  while (*end != '\0' && std::isspace(static_cast<unsigned char>(*end))) ++end;
+  return *end == '\0';
+}
+
+}  // namespace
+
+std::optional<Catalog::CheckRange> Catalog::GetCheckRange(
+    const std::string& table_name, const std::string& column_name) const {
+  const TableSchema* table = GetTable(table_name);
+  if (table == nullptr) return std::nullopt;
+  const int col_idx = table->FindColumnIndex(column_name);
+  if (col_idx < 0) return std::nullopt;
+  const std::string& target = table->columns[static_cast<size_t>(col_idx)].name;
+
+  std::optional<CheckRange> out;
+  for (const auto& check : table->check_constraints) {
+    std::string col;
+    std::string op;
+    double value = 0.0;
+    if (!ParseSimpleCheck(check.expression, &col, &op, &value)) continue;
+    if (ToLower(col) != ToLower(target)) continue;
+
+    CheckRange range;
+    if (op == ">=") {
+      range.has_lo = true;
+      range.lo = value;
+      range.lo_closed = true;
+    } else if (op == ">") {
+      range.has_lo = true;
+      range.lo = value;
+      range.lo_closed = false;
+    } else if (op == "<=") {
+      range.has_hi = true;
+      range.hi = value;
+      range.hi_closed = true;
+    } else if (op == "<") {
+      range.has_hi = true;
+      range.hi = value;
+      range.hi_closed = false;
+    } else if (op == "=") {
+      range.has_lo = true;
+      range.lo = value;
+      range.lo_closed = true;
+      range.has_hi = true;
+      range.hi = value;
+      range.hi_closed = true;
+    } else {
+      continue;
+    }
+
+    if (!out.has_value()) {
+      out = range;
+    } else {
+      // Two CHECKs on the same column: keep the tighter bound.
+      if (range.has_lo && (!out->has_lo || range.lo > out->lo ||
+                           (range.lo == out->lo && !range.lo_closed))) {
+        out->has_lo = true;
+        out->lo = range.lo;
+        out->lo_closed = range.lo_closed;
+      }
+      if (range.has_hi && (!out->has_hi || range.hi < out->hi ||
+                           (range.hi == out->hi && !range.hi_closed))) {
+        out->has_hi = true;
+        out->hi = range.hi;
+        out->hi_closed = range.hi_closed;
+      }
+    }
+  }
+  return out;
+}
+
+std::optional<ForeignKeyInfo> Catalog::GetForeignKeyFrom(const std::string& child_table,
+                                                         const std::string& child_column) const {
+  for (auto& info : GetForeignKeysOn(child_table)) {
+    if (info.child_columns.size() != 1) continue;  // single-column edges only
+    if (LowerCopy(info.child_columns[0]) == LowerCopy(child_column)) return info;
+  }
+  return std::nullopt;
 }
 
 }  // namespace sthir

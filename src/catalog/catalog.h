@@ -149,6 +149,35 @@ class Catalog {
   // Foreign keys whose child table is `table_name` (case-insensitive).
   std::vector<ForeignKeyInfo> GetForeignKeysOn(const std::string& table_name) const;
 
+  // ---- Phase 4B constraint catalog -------------------------------------
+  // These three read *guaranteed* facts out of the DDL. Unlike statistics
+  // they cannot be wrong, which is what lets rules R1-R4 rewrite a plan
+  // instead of merely guessing at its cardinality. Whether the facts are
+  // actually enforced in the running session is decided by the caller
+  // (`constraints_enabled`); these only report what was declared.
+
+  // True when `columns` is a PRIMARY KEY or a declared UNIQUE group.
+  bool IsUnique(const std::string& table_name,
+                const std::vector<std::string>& columns) const;
+
+  // Inclusive/exclusive value interval implied by a CHECK on one column,
+  // e.g. `CHECK (StockLevel >= 0)` -> [0, inf). Empty when no single-column
+  // CHECK names that column.
+  struct CheckRange {
+    bool has_lo = false;
+    double lo = 0.0;
+    bool lo_closed = true;
+    bool has_hi = false;
+    double hi = 0.0;
+    bool hi_closed = true;
+  };
+  std::optional<CheckRange> GetCheckRange(const std::string& table_name,
+                                          const std::string& column_name) const;
+
+  // The FK edge leaving `child_table` through `child_column`, if declared.
+  std::optional<ForeignKeyInfo> GetForeignKeyFrom(const std::string& child_table,
+                                                  const std::string& child_column) const;
+
   const std::string& catalog_path() const { return catalog_path_; }
 
   static bool IsValidIdentifier(const std::string& id);
