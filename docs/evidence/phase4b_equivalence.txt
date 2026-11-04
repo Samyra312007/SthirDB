@@ -1,0 +1,15 @@
+# Row equivalence: constraint_aware off vs on for every suite query
+# Identical output is required; a difference is a correctness bug.
+
+PASS  R1-pk                  identical rows with the flag off and on
+PASS  R1-unique              identical rows with the flag off and on
+PASS  R1-varchar             identical rows with the flag off and on
+PASS  R2-contradiction       identical rows with the flag off and on
+PASS  R2b-redundant          identical rows with the flag off and on
+PASS  R3-join-elimination    identical rows with the flag off and on
+PASS  R4-fk-cardinality      identical rows with the flag off and on
+PASS  R2b-plus-R3-chain      identical rows with the flag off and on
+PASS  control-1              identical rows with the flag off and on
+PASS  control-2              identical rows with the flag off and on
+
+equivalence: 10/10 queries returned identical rows

@@ -1,0 +1,11 @@
+retail-gen: seed=42, constraints=on
+  Staff                          50
+  Vendors                       100
+  Shoppers                     1000
+  Items                        5000
+  Purchases                  100000
+  Purchase_Line_Items        300000
+  Invoices                   100000
+  Item_Vendor_Catalogs        10000
+  TOTAL                      516150 rows in 11679.7 ms
+  constraint-backed indexes created: 9

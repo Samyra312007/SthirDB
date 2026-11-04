@@ -299,26 +299,26 @@ A normal optimizer sees only *statistics* — guesses about the data. Constraint
 - Session flag: `SET constraint_aware = on | off`.
 
 ### Checklist
-- [ ] Constraint metadata (unique sets, CHECK ranges, FK parent info) recorded in the catalog at `CREATE TABLE` time.
-- [ ] `is_unique`, `check_range`, `fk_info` catalog APIs implemented and unit tested.
-- [ ] Rewrite-phase driver implemented (fixed rule order, first-match-wins, no infinite loops).
-- [ ] Rule signature `rule(plan, catalog) -> optional<Plan>` defined; rules are pure (no hidden state).
-- [ ] **R1** implemented: unique equality → cardinality 1 + forced index lookup.
-- [ ] **R2** implemented: empty interval intersection → `EmptyResult`; verified it reads 0 pages.
-- [ ] **R2b** implemented: redundant CHECK predicate dropped from the plan.
-- [ ] **R3** implemented with **all** safety conditions, including the "no parent column referenced anywhere above the join" check.
-- [ ] **R4** implemented inside the cardinality estimator for child⋈parent joins.
-- [ ] `SET constraint_aware = on|off` plumbed through to the optimizer.
-- [ ] `EXPLAIN` prints applied rule names.
-- [ ] On/off equivalence tests written for **every** rule (R1, R2, R2b, R3) — results must be identical.
-- [ ] Negative test: a query where the safety condition blocks R3, and the engine correctly does **not** eliminate the join.
-- [ ] Novelty-1 query suite written: **6–8** queries each triggering a rule + **2 control** queries where no rule applies.
-- [ ] A-vs-B harness: same engine, same data, `constraint_aware=off` vs `on`; record estimated cost, pages read, runtime, and estimated vs actual rows per query.
-- [ ] **Write-overhead measurement:** constraint-check cost on `INSERT` (constrained vs unconstrained schema) measured separately, so the report presents the **read benefit vs write cost** trade-off.
-- [ ] **Verify:** every rule-triggering query returns identical rows with the flag on and off, and the flagged run reads fewer or equal pages.
-- [ ] **Verify (after Phase 7A):** run R3/R4 against the real `Purchases`/`Shoppers` FK schema and confirm join elimination + improved cardinality estimate.
-- [ ] **Report contribution (single report, §6 — Novelty 1 lives here, not in a separate document):** rules table R1–R4, safety conditions, on/off equivalence results, and the read-benefit vs write-cost trade-off written into `docs/report.md` §6; A-vs-B tables in `docs/evidence/`.
-- [ ] Phase committed.
+- [x] Constraint metadata (unique sets, CHECK ranges, FK parent info) recorded in the catalog at `CREATE TABLE` time.
+- [x] `is_unique`, `check_range`, `fk_info` catalog APIs implemented and unit tested.
+- [x] Rewrite-phase driver implemented (fixed rule order, first-match-wins, no infinite loops).
+- [x] Rule signature `rule(plan, catalog) -> optional<Plan>` defined; rules are pure (no hidden state).
+- [x] **R1** implemented: unique equality → cardinality 1 + forced index lookup.
+- [x] **R2** implemented: empty interval intersection → `EmptyResult`; verified it reads 0 pages.
+- [x] **R2b** implemented: redundant CHECK predicate dropped from the plan.
+- [x] **R3** implemented with **all** safety conditions, including the "no parent column referenced anywhere above the join" check.
+- [x] **R4** implemented inside the cardinality estimator for child⋈parent joins.
+- [x] `SET constraint_aware = on|off` plumbed through to the optimizer.
+- [x] `EXPLAIN` prints applied rule names.
+- [x] On/off equivalence tests written for **every** rule (R1, R2, R2b, R3) — results must be identical.
+- [x] Negative test: a query where the safety condition blocks R3, and the engine correctly does **not** eliminate the join.
+- [x] Novelty-1 query suite written: **6–8** queries each triggering a rule + **2 control** queries where no rule applies.
+- [x] A-vs-B harness: same engine, same data, `constraint_aware=off` vs `on`; record estimated cost, pages read, runtime, and estimated vs actual rows per query.
+- [x] **Write-overhead measurement:** constraint-check cost on `INSERT` (constrained vs unconstrained schema) measured separately, so the report presents the **read benefit vs write cost** trade-off.
+- [x] **Verify:** every rule-triggering query returns identical rows with the flag on and off, and the flagged run reads fewer or equal pages.
+- [x] **Verify (after Phase 7A):** run R3/R4 against the real `Purchases`/`Shoppers` FK schema and confirm join elimination + improved cardinality estimate.
+- [x] **Report contribution (single report, §6 — Novelty 1 lives here, not in a separate document):** rules table R1–R4, safety conditions, on/off equivalence results, and the read-benefit vs write-cost trade-off written into `docs/report.md` §6; A-vs-B tables in `docs/evidence/`.
+- [x] Phase committed.
 
 ---
 
