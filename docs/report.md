@@ -24,8 +24,8 @@
 
 | Field | Value |
 |---|---|
-| Name | Samyra |
-| Role | Sole author: storage, executor, optimizer, recovery, evaluation, report |
+| Name | Samyra ([Samyra312007](https://github.com/Samyra312007)) — storage, executor, optimizer, recovery, crash harness, evaluation, report |
+| Name | Deepak — Phase 8 consolidation, demonstration suite, README and report formatting |
 | Roll number | As recorded on the course submission form |
 | Selected option | Full engine track: Phases 1–8 including both novelties (crash-injection testing and the constraint-aware optimizer) |
 | Implementation language | C++17 |

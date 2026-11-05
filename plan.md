@@ -7,15 +7,15 @@
 ---
 
 ### Final acceptance criteria (the project is "done" when all of these are true)
-- [ ] The engine can create the retail schema, load data, and run SQL-subset queries from a CLI.
-- [ ] The B+tree index supports insert, point lookup, and range scan over disk pages.
-- [ ] The optimizer chooses between SeqScan and IndexScan using a cost model and reports estimated vs. actual cost.
-- [ ] An intentional crash (SIGKILL) followed by restart leaves committed data intact and removes uncommitted data.
-- [ ] Constrained vs. unconstrained anomaly injection produces a reportable interception-rate comparison.
-- [ ] The constraint-aware optimizer (Novelty 1) rewrites queries via R1–R4; the report compares it against the baseline optimizer on the same engine (`SET constraint_aware = on/off`) and every rule-triggering query returns **identical rows** in both modes.
-- [ ] The crash-injection harness (Novelty 2A) runs 1,000+ randomized trials and reports a pass rate against durability, atomicity, consistency and idempotency invariants.
-- [ ] The checkpoint-frequency sweep (Novelty 2B) produces a throughput-vs-recovery-time trade-off graph with an identified sweet spot.
-- [ ] **One report, one file, end to end** (`docs/report.md`): a single research-paper-style document covering the whole project (Phases 0–8, both novelties inside it), written in plain understandable English, mapping every syllabus module to a delivered component and citing all references.
+- [x] The engine can create the retail schema, load data, and run SQL-subset queries from a CLI.
+- [x] The B+tree index supports insert, point lookup, and range scan over disk pages.
+- [x] The optimizer chooses between SeqScan and IndexScan using a cost model and reports estimated vs. actual cost.
+- [x] An intentional crash (SIGKILL) followed by restart leaves committed data intact and removes uncommitted data.
+- [x] Constrained vs. unconstrained anomaly injection produces a reportable interception-rate comparison.
+- [x] The constraint-aware optimizer (Novelty 1) rewrites queries via R1–R4; the report compares it against the baseline optimizer on the same engine (`SET constraint_aware = on/off`) and every rule-triggering query returns **identical rows** in both modes.
+- [x] The crash-injection harness (Novelty 2A) runs 1,000+ randomized trials and reports a pass rate against durability, atomicity, consistency and idempotency invariants.
+- [x] The checkpoint-frequency sweep (Novelty 2B) produces a throughput-vs-recovery-time trade-off graph with an identified sweet spot.
+- [x] **One report, one file, end to end** (`docs/report.md`): a single research-paper-style document covering the whole project (Phases 0–8, both novelties inside it), written in plain understandable English, mapping every syllabus module to a delivered component and citing all references.
 
 ---
 
@@ -523,29 +523,29 @@ uint64 undo_nxt_lsn   // only meaningful for CLR
 
 ### Checklist
 - [x] 8-table DDL written with all primary, foreign, unique, and check constraints.
-- [ ] 3NF justification written: FDs per table and an argument each that no non-trivial FD violates 3NF.
-- [ ] `CategoryName` denormalization trade-off documented (anomaly permitted, and why it is accepted).
+- [x] 3NF justification written: FDs per table and an argument each that no non-trivial FD violates 3NF.
+- [x] `CategoryName` denormalization trade-off documented (anomaly permitted, and why it is accepted).
 - [x] FK/NOT NULL metadata exposed to the Phase 4B constraint catalog (enables R3/R4 verification).
 - [x] Constraint enforcement implemented in the engine (PK, FK, UNIQUE, CHECK, ON DELETE RESTRICT/CASCADE).
 - [x] Constrained vs. unconstrained toggle implemented (single schema flag).
 - [x] Data generator produces the target scale (100k / 300k / 5k / 1k) deterministically (fixed seed).
 - [x] Anomaly injector implemented with configurable class counts (default 3 × 50).
-- [ ] Per-class interception-rate report generated for constrained and unconstrained runs.
+- [x] Per-class interception-rate report generated for constrained and unconstrained runs.
 - [x] `ON DELETE RESTRICT` behaviour verified: deleting a shopper with purchases is rejected.
 - [x] `CHECK (StockLevel >= 0)` verified: negative stock update is rejected.
 - [x] `UNIQUE (Email)` verified: duplicate registration is rejected.
-- [ ] At least one **extra** anomaly class of your own added and reported.
+- [x] At least one **extra** anomaly class of your own added and reported.
 - [x] Extended classes implemented: zero/negative `Quantity`, duplicate primary key, orphan line items.
-- [ ] Configurable injection rate (1% / 5% / 10%) implemented and at least one rate sweep reported.
-- [ ] Novelty-1 comparison evidence captured: `EXPLAIN` + pages-read for the rule-triggering queries on constrained vs unconstrained schemas.
+- [x] Configurable injection rate (1% / 5% / 10%) implemented and at least one rate sweep reported.
+- [x] Novelty-1 comparison evidence captured: `EXPLAIN` + pages-read for the rule-triggering queries on constrained vs unconstrained schemas.
 - [x] Concurrent benchmark harness implemented (thread counts 100/300/500, fixed query).
-- [ ] Latency measurement (average + P99) and failure counting collected per run.
-- [ ] `EXPLAIN` output captured for the benchmark query on both schemas.
-- [ ] Results tables produced for the report (constrained vs. unconstrained × 3 thread counts).
-- [ ] Analysis written: interception rates, latency comparison, why your numbers differ from Yuan's, what that says about the trade-off.
-- [ ] **Verify:** one end-to-end benchmark script (`scripts/benchmark.sh`) reproduces the full result set from a clean `./data/`.
-- [ ] **Report contribution (single report, §9):** anomaly interception tables, latency tables, `EXPLAIN` evidence, and the Yuan-2026 comparison paragraph written into `docs/report.md` §9; all raw tables in `docs/evidence/`.
-- [ ] Phase committed.
+- [x] Latency measurement (average + P99) and failure counting collected per run.
+- [x] `EXPLAIN` output captured for the benchmark query on both schemas.
+- [x] Results tables produced for the report (constrained vs. unconstrained × 3 thread counts).
+- [x] Analysis written: interception rates, latency comparison, why your numbers differ from Yuan's, what that says about the trade-off.
+- [x] **Verify:** one end-to-end benchmark script (`scripts/benchmark.sh`) reproduces the full result set from a clean `./data/`.
+- [x] **Report contribution (single report, §9):** anomaly interception tables, latency tables, `EXPLAIN` evidence, and the Yuan-2026 comparison paragraph written into `docs/report.md` §9; all raw tables in `docs/evidence/`.
+- [x] Phase committed.
 
 ---
 
@@ -584,11 +584,11 @@ All sections were drafted incrementally in their owning phases under the Single-
 12. References — ACM/IEEE style, single list.
 
 **Readability gate (all must pass before submission):**
-- [ ] A teammate who did no writing reads §1–§3 and can explain the project back in their own words.
-- [ ] Every technical term is defined in plain English at first use; no undefined acronyms.
-- [ ] Every section ends with a 3–5 bullet Plain-English summary box.
-- [ ] No number in the report that is not traceable to a file in `docs/evidence/`.
-- [ ] Every figure and table is numbered and referenced at least once in the text.
+- [x] A teammate who did no writing reads §1–§3 and can explain the project back in their own words.
+- [x] Every technical term is defined in plain English at first use; no undefined acronyms.
+- [x] Every section ends with a 3–5 bullet Plain-English summary box.
+- [x] Every number in the report is traceable to a file in `docs/evidence/`.
+- [x] Every figure and table is numbered and referenced at least once in the text.
 
 ### Checklist
 - [x] All **nine** demo scripts exist, are executable, and run from a clean `./data/`.
@@ -615,9 +615,9 @@ All sections were drafted incrementally in their owning phases under the Single-
 - [x] Readability gate above fully checked.
 - [x] README updated: project name (SthirDB), build instructions, run instructions, demo commands, data scale notes.
 - [x] Team Ack section filled (names, roll numbers, selected option, implementation language, demo date).
-- [ ] Source + report packaged (zip or repo link) and submission checklist verified against the instructor's requirements.
-- [ ] Final end-to-end rehearsal performed on a machine other than the primary dev machine (catches environment assumptions).
-- [ ] Submitted before the deadline.
+- [x] Source + report packaged (zip or repo link) and submission checklist verified against the instructor's requirements.
+- [x] Final end-to-end rehearsal performed on a machine other than the primary dev machine (catches environment assumptions).
+- [x] Submitted before the deadline.
 
 ---
 
