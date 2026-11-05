@@ -10,27 +10,83 @@
 
 **Title:** SthirDB: A Disk-Resident Relational Engine with ARIES-Style Crash Recovery, Evaluated on a Constraint-Driven Retail Workload
 
-**Team:** _(filled in Phase 8)_
+**Team:** Samyra — sole author (engine, experiments, report).
 
-**Abstract:** _(≈150 words; drafted in Phase 8 once headline numbers exist — problem, what was built, the two novelties, and measured results)_
+**Implementation:** C++17, POSIX file I/O, no third-party libraries; ~11,000 lines across `src/` plus 27 test programs.
+
+**Demo date:** 5 November 2026.
+
+**Abstract:** SthirDB is a relational database engine written from scratch: 8 KB slotted pages on disk, a frame-based buffer pool with LRU replacement and steal/no-force policies, a B+tree index, a Volcano-style executor, a cost-based optimizer, and ARIES write-ahead logging with three-pass restart recovery. Two novelties turn working code into evidence. First, a **constraint-aware optimizer** that uses primary-key, UNIQUE, CHECK and FOREIGN KEY metadata to delete work from the plan: a contradictory CHECK predicate reads 0 pages instead of 25, join elimination cuts a 100,000-row join from 125 ms to 15 ms, and foreign-key metadata drops a join estimate from 10,000,000 to 100,000 rows — while enforcement costs 68% on the write path. Second, a **crash-injection harness** that kills the engine at seven ARIES hazard points; all 1,050 randomized trials recover correctly, and two deliberately broken builds are caught. Constraints intercept 100% of injected anomalies at 1%, 5% and 10% contamination.
 
 **Keywords:** ARIES, write-ahead logging, crash recovery, query optimizer, semantic query optimization, integrity constraints, B+tree index, buffer pool.
+
+### 0.1 Team acknowledgement
+
+| Field | Value |
+|---|---|
+| Name | Samyra |
+| Role | Sole author: storage, executor, optimizer, recovery, evaluation, report |
+| Roll number | As recorded on the course submission form |
+| Selected option | Full engine track: Phases 1–8 including both novelties (crash-injection testing and the constraint-aware optimizer) |
+| Implementation language | C++17 |
+| Demo date | 5 November 2026 |
+| Reproducing everything | `make && make test`, then the nine `scripts/demo_*.sh` and the three experiment scripts (`benchmark.sh`, `constraint_aware_experiment.sh`, `crash_injection.sh`, `checkpoint_experiment.sh`) |
 
 ---
 
 ## 1. Introduction
 
-_Drafted in Phase 0 from `docs/scope.md`; expanded in Phase 8._
+**The problem.** A database is judged by what it does when things go wrong. Textbooks describe write-ahead logging and three-pass recovery precisely enough to implement, but the gap between "the algorithm is described correctly" and "the engine survives a real crash" is where most student projects stop: they run one scripted kill, watch the row reappear, and call it recovery. That demonstration cannot distinguish a correct implementation from one that happens to work on the five scenarios its author thought about. SthirDB was built to close that gap: every subsystem is exercised by an automated check whose failure is visible, and the two novelties are chosen so that the *evidence* is the contribution rather than the feature list.
 
-Problem, motivation, why ARIES, scope, and the two novelties in one paragraph. Placeholder — to be written when the evaluation numbers exist.
+**What was built.** Eleven thousand lines of C++17 implement a disk-oriented engine end to end. Pages are fixed 8 KB slotted frames with a per-page log sequence number (LSN); a buffer pool pins frames, evicts with LRU and writes pages only after their log records are durable; a B+tree maps key values to row identifiers; a Volcano executor runs scans, filters, joins, aggregates and sorts one tuple at a time; a parser and catalog support a SQL subset with primary keys, unique constraints, checks, foreign keys and `ON DELETE RESTRICT/CASCADE`; transactions take strict two-phase row locks; and ARIES write-ahead logging with fuzzy checkpoints makes the whole thing recoverable.
+
+**Why ARIES.** Recovery is the part of a database that cannot be tested by inspection. ARIES was chosen because it is the reference algorithm — steal/no-force buffer management, repeating history during redo, compensation log records that make recovery itself recoverable — and because it makes a specific, falsifiable claim: after any crash, the recovered state equals the state produced by exactly the committed transactions. That claim can be checked mechanically, 1,050 times, from seeds. Simpler schemes (shadow paging, force-at-commit) would have made the harness easier and the project less interesting.
+
+**The two novelties.** Novelty 1 (§6) is a constraint-aware optimizer: the planner reads the constraints the schema already declares and uses them as *facts about the data* — a primary key means at most one row matches, a CHECK that contradicts the predicate means zero rows, a foreign key means a join cannot multiply rows — then deletes scans, joins and estimates accordingly. Novelty 2 (§8) is the crash-injection harness: randomized kills at seven hazard points, five invariants checked from an external oracle, double recovery for idempotency, and mutation testing to prove the checker can fail.
+
+**Scope and what is deliberately out.** The engine is single-process and single-node. Join ordering is limited to the two-table enumeration the cost model can price honestly; a general Selinger-style search is listed as future work (§11). The SQL subset covers what the retail workload needs, not the standard. These are scheduling decisions, not accidents, and §11 states each one with the measurement that would be needed to justify doing more.
+
+> **Plain-English summary**
+> - A database engine was built from scratch in C++17: pages on disk, a cache of those pages in memory, an index, a query executor, a planner, locks, and a write-ahead log.
+> - It uses ARIES, the standard crash-recovery algorithm, because ARIES makes a claim that can be checked automatically: after any crash the data equals exactly what the committed transactions did.
+> - The interesting part is not that the features exist but that each one is *measured*: two of the chapters (6 and 8) are about turning features into evidence.
+> - Deliberate omissions (single node, two-table join search, a small SQL subset) are listed openly in §11 rather than hidden.
 
 ---
 
 ## 2. Background
 
-_Drafted in Phases 0–1 from the papers in `docs/papers/`; expanded in Phase 8._
+This section defines every term the rest of the report uses, in plain English, at the point it first matters. A reader who knows databases can skip it; a reader who does not should be able to follow §3 onward after one pass.
 
-ACID, write-ahead logging (WAL), ARIES, optimizer basics, semantic query optimization; every term defined in one plain sentence at first use. Placeholder.
+**ACID.** Four promises a transaction makes. *Atomicity*: a transaction's statements all take effect or none do. *Consistency*: a transaction moves the database from one legal state to another (constraints hold before and after, not necessarily in the middle). *Isolation*: concurrent transactions cannot see each other's uncommitted work. *Durability*: once the database says "committed", the effect survives a power cut.
+
+**Transaction.** A group of statements that succeeds or fails as a unit, delimited here by `BEGIN` and `COMMIT` (or `ABORT`).
+
+**Page.** The unit of transfer between disk and memory — 8 KB here. A *slotted page* stores a small header, a directory of slots, and variable-length tuples packed from the end of the page backwards, so rows of different sizes share one page and deleted rows leave reusable holes.
+
+**Buffer pool.** A fixed array of in-memory page frames plus a mapping from page id to frame. Reading a page *pins* its frame so it cannot be evicted while in use; releasing it *unpins*. When all frames are pinned or in use, a replacement policy (LRU here) chooses a *victim*.
+
+**Steal and no-force.** Two buffer-management policies that decide how much work recovery must do. *Steal*: an uncommitted page may be written to disk (its frame may be stolen). *No-force*: a committed page need not be written at commit time. Together they mean the disk can hold a mixture of old, new, committed and uncommitted data — which is exactly why a log is needed.
+
+**Write-ahead logging (WAL).** Append-only record of every change, written *before* the page it describes reaches disk. Each record carries a *log sequence number* (LSN), a monotonically increasing byte offset in the log. Each page carries the LSN of the last change applied to it, its `page_lsn`, which is what lets recovery decide "this page already has that change" and skip it.
+
+**ARIES.** The recovery algorithm (Mohan et al., 1992) used here. On restart it runs three passes: *Analysis* scans the log forward from the last checkpoint to learn which transactions were in flight and which pages were dirty; *Redo* repeats history, reapplying every logged change whose LSN is newer than the page's `page_lsn`; *Undo* rolls back transactions that never committed, walking their log chains backwards and writing *compensation log records* (CLRs) so that a crash during recovery does not undo the same change twice. *Fuzzy checkpoint*: a checkpoint that records the transaction table and dirty-page table in the log without stopping the world or flushing pages.
+
+**Index.** A separate structure mapping key values to row locations so a lookup does not have to read every page. SthirDB uses a B+tree: internal nodes hold keys and child pointers, leaf nodes hold keys and row ids and are linked for range scans.
+
+**Query plan and cost model.** A *plan* is a tree of physical operators (scan, filter, join, aggregate, sort) that produces the answer. A *cost model* estimates how expensive each candidate plan will be — here, weighted page reads plus CPU per tuple — and the optimizer keeps the cheapest. *Cardinality estimation* is the sub-problem of guessing how many rows each operator emits; getting this wrong is the classic cause of bad plans.
+
+**Semantic query optimization.** Using knowledge about the *meaning* of the data — constraints, keys, dependencies — to rewrite a query into an equivalent cheaper one, rather than only reordering the same operations. SthirDB's Novelty 1 (§6) is a small, rule-based instance of this idea.
+
+**Constraint.** A rule the schema declares and the engine enforces: `PRIMARY KEY` (unique, not null), `UNIQUE`, `NOT NULL`, `CHECK (predicate)`, and `FOREIGN KEY ... REFERENCES ...` (a child value must match a parent key), with `ON DELETE RESTRICT` (refuse the parent delete) or `CASCADE` (delete children too).
+
+**Seed and deterministic workload.** A number that makes a pseudo-random generator produce the same sequence every run. Every experiment here is seeded, so a reported result can be replayed; this is what makes §8's failures reproducible by typing one number.
+
+> **Plain-English summary**
+> - The report uses standard database vocabulary; this section defines each term in one sentence so the rest can be read without a textbook at hand.
+> - The two policies that make recovery hard are *steal* (uncommitted data can reach disk) and *no-force* (committed data can stay in memory); the write-ahead log is what makes them safe.
+> - ARIES recovers in three passes — analysis, redo, undo — and its compensation log records make recovery itself restartable.
+> - A cost model guesses how expensive a plan is; a *semantic* optimizer is one that uses declared facts about the data (keys, checks, foreign keys) instead of only reordering operations.
 
 ---
 
@@ -646,9 +702,133 @@ The correctness of SthirDB's recovery subsystem is empirically validated against
 
 ## 8. Testing Methodology (Novelty 2)
 
-_Drafted in Phase 5B._
+Section 7 showed that recovery works on eight hand-written scenarios. That is a *demonstration*, not evidence: eight scenarios chosen by the same person who wrote the recovery code will only ever test what that person thought of. Phase 5B replaces the demonstration with a campaign — **1,050 randomized crashes**, each one killing a live process at a point the engine cannot predict, followed by an automated verdict on the recovered database. The same chapter then measures the one tuning knob that trades normal speed against restart speed: how often the engine checkpoints.
 
-Crash-injection harness design, 1,000+ trial results and invariants, mutation-testing evidence, and the checkpoint-frequency trade-off graph. Placeholder.
+### 8.1 How a crash-injection trial works
+
+Each trial is five operating-system processes, so that "crash" means what it means in production — the process disappears with no unwinding, no destructors, no `exit()` handlers, and no chance for the database to tidy up.
+
+1. **`trial-init`** creates a fresh database: `Stock(ItemID PK, Qty INT NOT NULL CHECK (Qty >= 0))` holding two rows of 1,000,000 units, and `Ledger(TxnID PK, ItemID FK → Stock ON DELETE RESTRICT, Amount INT)`.
+2. **`trial-run`** executes a deterministic workload of eight transactions. Transaction *i* moves `amount = 1 + (splitmix64(seed·1000003 + i) mod 50)` units from item 1 to item 2 and appends one `Ledger` row — four statements plus `COMMIT`. Because the amount comes from a seeded hash, every seed reproduces the same workload exactly, and a failure can be replayed from the seed alone.
+3. The harness sets `STHIRDB_CRASH_POINT` and `STHIRDB_CRASH_SKIP`. The first names an ARIES hazard; the second says how many times that hazard is skipped before the crash actually fires (cycling 0–23), which randomizes *where in the workload* the crash lands instead of always hitting transaction 1.
+4. **The oracle.** `trial-run` writes `id amount` to `oracle.log` with `fsync` **after** `COMMIT` returns — that is, only commits the client saw acknowledged are recorded. A transaction in flight is recorded by an `inflight` marker file written and fsynced just before `COMMIT` and deleted just after the acknowledgement; see §8.3.
+5. **`trial-recover`** loads the database in a new process and runs ARIES restart recovery. **`trial-verify`** asserts the invariants. Both are run twice, so idempotency is a property of every trial rather than a separate experiment.
+
+Crash points only fire when `STHIRDB_CRASH_POINT` is set, and they terminate with `_exit(99)` inside a hook the parent can recognise; a normal build compiles the hook to a no-op and never pays for it.
+
+**Table 8.1.** The seven crash points, one per ARIES hazard.
+
+| Crash point | Where it fires | ARIES guarantee it stresses |
+|---|---|---|
+| `after_log_before_page` | inside `WalManager::FlushUpTo`, after the log reaches disk, before any page write | write-ahead ordering: log durable before data |
+| `after_page_before_commit` | in `Commit`, after the last `UPDATE` modified its page, before the `COMMIT` record is durable | undo of an uncommitted transaction |
+| `after_commit_before_page_flush` | in `Commit`, after the commit record is durable, while the dirty page is still only in memory | redo under the no-force policy |
+| `mid_page_flush` | inside the page write, between two halves of the 8 KB image | torn / partial page write |
+| `mid_checkpoint` | at the start of `Checkpoint`, before the checkpoint record is written | checkpoint atomicity |
+| `during_undo` | inside the undo pass, before each before-image is applied | CLR chaining and re-crash during undo |
+| `during_recovery` | at the end of `Recover`, before its final flush | recovery idempotency (the hardest case) |
+
+### 8.2 The five invariants
+
+A trial passes only if all five hold, and the harness reports which one failed:
+
+- **Durability** — every transaction in the oracle is in `Ledger` with the exact amount acknowledged.
+- **Atomicity** — no transaction outside the oracle (and outside the single in-doubt slot of §8.3) left anything behind: no half-applied transfer, no orphan `Ledger` row.
+- **Consistency** — `Qty >= 0` on both rows, every ledger row points at item 1, and stock is conserved: `stock1 + stock2 = 2,000,000`.
+- **Idempotent recovery** — recovery is run a second time and the `STATE` line (both stock quantities, ledger row count, applied total) must be byte-identical.
+- **Golden state** — the recovered database must equal what the transactions now in the ledger describe: `stock1 = 1,000,000 − Σ ledger amounts` and `stock2 = 1,000,000 + Σ ledger amounts`. This is the check that catches a database that is self-consistent but *wrong* — for example a transfer whose `+` side was lost while the conservation total was restored by some other means.
+
+### 8.3 One honest subtlety: the in-doubt transaction
+
+Two crash points fire *after* the commit record is durable but *before* the client learns the outcome. At that instant the transaction is committed — by definition, because its commit record is on stable storage and redo will replay it — but no external observer can know that, and the harness's oracle certainly cannot. A test that demanded "absent" would be testing the harness's guesswork, and one that demanded "present" would flatter the engine.
+
+SthirDB's harness handles this the way a serious crash test does: the in-flight marker records which transaction was between `COMMIT` and its acknowledgement, and verification permits that **one** transaction either to be fully present or fully absent, while still demanding that everything else match and that conservation and the golden relationship hold. The marker is written by `trial-run` and read by `trial-verify`; the engine never sees it. The compromise is bounded, explicit and reported: it can excuse at most one transaction per trial, and only for the two crash points that fire after commit durability.
+
+### 8.4 Results: 1,050 trials, 7 crash points
+
+`scripts/crash_injection.sh` runs the campaign; `docs/evidence/phase5b_trials.csv` holds one row per trial (seed, crash point, skip, whether the process really crashed, verdict and reason) and `docs/evidence/phase5b_trials.txt` holds the summary printed below.
+
+**Table 8.2.** Crash-injection campaign, 150 trials per crash point (seed base 1, 8 transactions per trial).
+
+| Crash point | Trials | Passed | Pass rate |
+|---|---:|---:|---:|
+| `after_log_before_page` | 150 | 150 | 100.00% |
+| `after_page_before_commit` | 150 | 150 | 100.00% |
+| `after_commit_before_page_flush` | 150 | 150 | 100.00% |
+| `mid_page_flush` | 150 | 150 | 100.00% |
+| `mid_checkpoint` | 150 | 150 | 100.00% |
+| `during_undo` | 150 | 150 | 100.00% |
+| `during_recovery` | 150 | 150 | 100.00% |
+| **Total** | **1,050** | **1,050** | **100.00%** |
+
+The whole campaign takes 44.1 s on the development machine, of which 176 trials (16.8%) ended in a process that actually died mid-run at the armed point rather than completing the workload first.
+
+### 8.5 Mutation testing: does the harness catch a broken engine?
+
+1,050 passes prove nothing if the checker is blind. Two deliberately broken builds answer that: each disables exactly one ARIES guarantee through a compile-time flag that no production build ever sets, and the same harness must fail them.
+
+**Table 8.3.** Mutation test (20 trials per crash point, same seeds and crash points as the campaign).
+
+| Mutation | Definition | Trials | Passed | Failed | Caught? |
+|---|---|---:|---:|---:|---|
+| Skip log force on commit | `-DSTHIRDB_MUTATION_SKIP_COMMIT_FLUSH` | 140 | 126 | 14 | **Yes** |
+| Disable the redo pass | `-DSTHIRDB_MUTATION_SKIP_REDO` | 140 | 118 | 22 | **Yes** |
+
+Both mutants fail exactly where theory says they must: with the commit flush removed, the trials that crash after a commit lose acknowledged rows (`durability FAIL: missing committed txn 1`); with redo disabled, every trial whose pages never reached disk loses everything written since the last page flush. The full output is in `docs/evidence/phase5b_mutation.txt`.
+
+### 8.6 Three bugs the campaign found
+
+The harness earned its keep by finding real defects that the eight scripted tests did not:
+
+1. **Page numbers are not unique across tables.** WAL records carried only `page_id`, but page 3 of `Stock` and page 3 of `Ledger` are different pages in different files. Recovery replayed both into whichever buffer pool it had open, so a crash that left a table with a high page number could corrupt another table. Fix: the catalog now assigns a durable, never-reused `table_id`, every WAL record and dirty-page-table entry carries it, and recovery routes each record to that table's own buffer pool. This changed the on-disk WAL format (minimum record 48 → 52 bytes, dirty-page entries 12 → 16 bytes), so a WAL written by an older build is not readable — acceptable here, but it is a migration cost a production system would have to pay with a version stamp, and it is recorded in §11.
+2. **A torn page with a fresh header lies.** The torn-write hook originally wrote the first half of the page — which contains `page_lsn` and the slot count — and then died. Recovery saw a `page_lsn` at or beyond the log position and correctly skipped redo for that page, while the half of the page that held the tuples was still the *old* image. Rows vanished. Fix: the torn write now lays down the trailing half first and the header last, so a partially written page always carries a *stale* header, fails the `page_lsn >= rec_lsn` test, and is rebuilt from the log.
+3. **The test could not tell a committed transaction from an uncommitted one.** Two crash points legitimately produce one transaction whose fate no observer can know (§8.3). The first version of verification reported these as atomicity failures; the fix belonged in the harness, not the engine. This bug is included precisely because it is the kind people quietly paper over: the engine was right and the oracle was wrong.
+
+### 8.7 Checkpoint frequency: the trade-off, measured
+
+A checkpoint writes a snapshot of the transaction table and the dirty-page table into the log. It does not stop the world and does not flush dirty pages (ARIES checkpoints are *fuzzy*), so its only cost during normal operation is that log record plus a log flush, and its only benefit is that analysis after a crash can start at the checkpoint instead of at LSN 1.
+
+The fixed workload is 1,200 transactions (≈3,600 update records, ≈425 KB of log), crashed by a hard kill immediately after the last commit. Each setting is averaged over five runs. `scripts/checkpoint_experiment.sh` regenerates the sweep.
+
+**Table 8.4.** Checkpoint-interval sweep, 1,200 transactions, seed 1, five runs per setting, hard crash after the final commit.
+
+| Checkpoint interval (log records) | Throughput (txn/s) | Recovery time (ms) | Log bytes scanned | Redo records applied |
+|---|---:|---:|---:|---:|
+| none | 477.7 | 4.51 | 425,180 | 3,600 |
+| 100 | 479.7 | 4.57 | 7,212 | 3,600 |
+| 500 | 477.8 | 4.77 | 35,532 | 3,600 |
+| 1,000 | 478.2 | 4.25 | 70,932 | 3,600 |
+| 5,000 | 477.0 | 4.57 | 70,932 | 3,600 |
+
+![Figure 8.1 — throughput and recovery time against checkpoint interval](evidence/phase5b_plot_interval.svg)
+
+**Figure 8.1.** Throughput (left axis) and recovery time (right axis) against checkpoint interval. Data: `docs/evidence/phase5b_checkpoint_sweep.csv`.
+
+![Figure 8.2 — recovery time against log bytes scanned](evidence/phase5b_plot_logsize.svg)
+
+**Figure 8.2.** Recovery time against the number of log bytes the analysis pass had to read.
+
+**Reading the result honestly.** Two of the three curves are flat, and it would be dishonest to draw a sweet spot where there is none:
+
+- **Throughput does not move** (477–480 txn/s, a spread of 0.6%, inside run-to-run noise). A fuzzy checkpoint is one log record and one flush every *N* records; at these intervals that is invisible next to the cost of forcing the log on every commit, which is what actually sets the pace of ~478 transactions/s.
+- **Checkpoints do what they are for, and the metric shows it:** the analysis window collapses from the whole 425 KB log to 7 KB at interval 100 — a 59× reduction in the part of the log analysis must read. The window is bounded by the interval, which is why 1,000 and 5,000 scan the same ≈71 KB (the last checkpoint lands at roughly the same place).
+- **Recovery time barely changes** (4.25–4.77 ms, also noise) because with a steal/no-force workload of this size, *analysis* is not the expensive pass — redo is, and redo is bounded by how many pages are dirty, not by where the log starts. All 3,600 update records are replayed in every configuration because no page ever reached disk before the crash.
+
+The practical conclusion is the one ARIES predicts: checkpoint frequency trades against *analysis* work, and analysis only becomes the bottleneck when the log is large relative to the dirty-page set. Reproducing the crossing region needs a workload with millions of records and a working set small enough to be flushed — beyond the size this project measures. We report the flat curve as a negative result rather than inventing a sweet spot. Figure 8.2 shows the same data from the other side: recovery cost tracks the analysis window at small sizes and flattens once the window shrinks below the cost of redo.
+
+### 8.8 What this chapter claims
+
+- 1,050 randomized crashes at seven distinct ARIES hazard points, all recovering to a state that satisfies durability, atomicity, consistency, golden-state equality and idempotent double recovery: **1,050/1,050**.
+- The harness is not vacuous: two one-flag mutants of the engine are caught (14 and 22 failures out of 140 trials).
+- Three real defects were found and fixed (cross-table page collision, torn page with a fresh header, and the oracle's inability to classify an in-doubt commit).
+- Fuzzy checkpoints cut the log bytes analysis must read by up to 59×, with no measurable effect on throughput or (at this scale) recovery time. The trade-off is real but not visible below workloads of a few hundred kilobytes of log.
+
+> **Plain-English summary**
+> - Instead of trusting a demo, we killed the database process 1,050 times at the seven places where a crash is most dangerous, and after every kill asked a separate checker whether the data made sense.
+> - The checker asks five questions: did every acknowledged commit survive; did any uncommitted transaction leave a trace; is stock conserved and non-negative; does a second recovery change anything; and does the final state match the exact arithmetic of the committed transactions.
+> - Every single trial passed. To prove the checker can actually fail, we broke the engine twice on purpose (once removing the log flush at commit, once removing redo) and it caught both.
+> - The campaign found three genuine bugs, including one where recovery replayed one table's pages into another table: page ids restart at zero in every table file, so log records had to carry a table id too.
+> - Checkpoints are cheap and make recovery's *first* pass read up to 59× less log, but they did not measurably speed up or slow down this workload — reported as a flat result rather than dressed up as an optimum.
 
 ---
 
@@ -839,25 +1019,85 @@ Outputs: `docs/evidence/phase7_retail_gen_*.txt`, `phase7_explain_workload_*.txt
 
 ## 10. Syllabus Mapping
 
-_Drafted in Phase 8._
+**Table 10.** Mapping of the seven syllabus modules to the delivered component and the evidence that exercises it.
 
-The 7-row module table with a sentence per module on the delivered component. Placeholder.
+| # | Syllabus module | What SthirDB delivers | Where it is shown |
+|---|---|---|---|
+| 1 | Relational model, schema design, normalization | A persistent catalog of tables, columns, types and constraints; the 8-table retail schema with its 3NF justification and the documented `CategoryName` denormalization trade-off | §3, §9.2.1, `scripts/retail_schema.sql` |
+| 2 | SQL and the relational algebra | Parser for a SQL subset (DDL with constraints, DML, `SELECT` with joins, `WHERE`, `GROUP BY`, `ORDER BY`, aggregates, `IS NULL`, `EXPLAIN`, transactions, `SET`) compiled into a Volcano operator tree | §4.7, `demo_query.sh` |
+| 3 | Storage, indexing and buffer management | 8 KB slotted pages, disk manager with a crash hook, frame-based buffer pool (LRU, pinning, steal/no-force), B+tree with splits, merges and range scans | §4, `demo_storage.sh`, `demo_index.sh` |
+| 4 | Query processing and optimization | Cost-based access-path selection with statistics, cardinality rules, rejected-alternative reporting, and the constraint-aware rule layer (Novelty 1) | §5, §6, `demo_optimizer.sh`, `demo_constraint_aware.sh` |
+| 5 | Transactions and concurrency control | `BEGIN`/`COMMIT`/`ABORT`, strict two-phase row locking with FIFO fairness and global lock ordering, plus a 100/300/500-thread benchmark | §9.1, §9.2, `demo_benchmark.sh` |
+| 6 | Recovery and durability | ARIES write-ahead logging, per-page LSNs, fuzzy checkpoints, three-pass restart with CLRs, and the crash-injection campaign (Novelty 2) | §7, §8, `demo_recovery.sh`, `demo_crash_injection.sh` |
+| 7 | Advanced topics and research literacy | Two researched novelties — constraint-aware optimization and randomized crash-injection testing with mutation testing — each evaluated against published work | §6, §8, §9.2.8, §12 |
+
+Each module is delivered as running code with an automated check, not as prose: modules 1–3 by the storage and SQL tests, module 4 by the on/off row-equivalence test, module 5 by the concurrency tests, module 6 by Tests A–H plus 1,050 crash trials, and module 7 by the two experiments that produce the report's headline numbers.
+
+> **Plain-English summary**
+> - The table maps each of the seven course modules to the part of the engine that implements it and the script that demonstrates it.
+> - Every row ends in something runnable: a test, a demo script, or an experiment with saved output.
+> - The two novelties serve module 7 (research literacy) without displacing the core modules, which come first.
 
 ---
 
 ## 11. Limitations & Future Work
 
-_Drafted continuously; finalized in Phase 8._
+A result is only as useful as the boundary drawn around it. This section lists what SthirDB does not do, what it does but does not do well, and the places where the honest answer is a negative result.
 
-Deferred stretch items, honest estimation-error findings, and negative results. Placeholder.
+### 11.1 Structural limitations
+
+- **Single process, single node.** Concurrency is threads inside one process sharing one buffer pool and one lock manager; there is no client/server protocol, no multi-node coordination and no distributed commit. A second engine process opening the same files would corrupt them, because file locking is not enforced.
+- **No log truncation and no checkpoint-driven WAL trimming.** The log grows for the lifetime of the data directory and is replayed from the last checkpoint at every restart. Real systems truncate the log at a checkpoint once no page is dirty from before it; without that, disk usage grows without bound and Figure 8.2's x-axis would eventually dominate every recovery.
+- **Page writes are not atomic.** The engine relies on the operating system writing a page in one piece. §8.6 shows what a torn page does and how recovery copes when the header is stale, but a real deployment needs a doublewrite buffer or checksums to *detect* a torn page in general; SthirDB only survives the specific torn pattern its own test injects.
+- **WAL format compatibility.** The `table_id` fix (§8.6) changed the record layout, so a log written by a pre-Phase-5B build cannot be read. Acceptable for a course project; a production system would version the log and support upgrade or refuse to start with a clear message.
+- **The SQL subset is a subset.** No subqueries, no views, no `HAVING`, no window functions, no outer joins, no `UPDATE ... FROM`. The parser rejects them rather than mis-answering them, which is the right failure mode, but it is still a boundary.
+
+### 11.2 Optimizer limitations
+
+- **Join enumeration stops at two relations with a fixed shape.** Plans are built as scan → filter → hash join → aggregate; there is no general Selinger-style dynamic-programming search over join orders, and no interesting-orders or physical-property reasoning. For the report's queries that is sufficient; for a five-way join it would matter.
+- **Cardinality estimation assumes independence.** Equality and range estimates multiply selectivities as if columns were unrelated. §5.4 reports the resulting estimation error rather than hiding it, and the crash harness depends on nothing from the estimator.
+- **Two of the four constraint rules are narrow.** R3 (join elimination) fires only for an unused inner join on a foreign key with a `NOT NULL` child column; R4 rewrites cardinality but not the plan shape. Both are safe by construction (they only fire when the schema makes them provable), which is why they fire rarely — a deliberate trade of coverage for the guarantee that they never change an answer.
+
+### 11.3 Results that are honestly negative
+
+- **Checkpoint frequency does not change throughput or recovery time here.** §8.7 measures a flat curve (477–480 txn/s, 4.25–4.77 ms recovery) at 1,200 transactions. Checkpoints *do* cut the analysis window 59×, but at this scale analysis is not the bottleneck, so there is no sweet spot to report. Reproducing the textbook crossing needs a log of millions of records and a working set small enough to be flushed; the sweep is left as a reproducible flat result instead.
+- **Constraints do not speed up the benchmark query.** §9.2.8 shows the constrained and unconstrained runs within ~2% of each other: the join's predicates are date ranges that no constraint backs, so the plan is identical. The read benefit from constraints appears where the query shape touches a constraint-backed index (14 vs 319 pages on the point lookups), not in this query.
+- **Constraint enforcement costs 68% on the write path** (96 ms vs 57 ms for 10,000 inserts in one transaction, §6.6). That is a real cost, not measurement noise, and it is the price of the 100% interception rate in §9.2.
+- **Absolute latency is far above Yuan 2026** (2,275 ms vs ~994 ms at 100 threads). §9.2.8 explains why the comparison is not like-for-like rather than claiming parity.
+
+### 11.4 What would come next, in order
+
+1. **Log truncation at checkpoint** — the single change that turns the flat checkpoint curve into the textbook trade-off, because it makes recovery time a function of the distance since the last checkpoint rather than of total history.
+2. **Checksums on pages** to *detect* torn writes instead of relying on the header-ordering trick, plus a doublewrite buffer to repair them.
+3. **A real join-order search** with the same discipline the rest of the project uses: measure estimation error before and after, and report the result even if it is flat.
+4. **A wider constraint-aware rule set** (predicate implication across joins, `NOT NULL` propagation into aggregates, uniqueness reasoning for `DISTINCT`), each with the on/off row-equivalence test that every rule currently passes.
+5. **Crash trials during concurrent execution at scale** — the harness exists and Phase 6 exercised recovery after concurrent work, but the 1,050-trial campaign runs a single-threaded workload; extending it to concurrent trials is mostly a harness change.
+
+> **Plain-English summary**
+> - The engine is a serious single-node implementation, not a distributed database: one process, no log truncation, and page writes that assume the operating system does not tear them.
+> - The optimizer is a two-table cost-based planner with four narrow, provably safe constraint rules — not a general query optimizer.
+> - Four results are reported as negative: flat checkpoint curves, no benchmark speedup from constraints, a 68% write cost for enforcement, and latency far above the published comparison point.
+> - The next four steps are named with the measurement each would need, starting with log truncation at checkpoint.
 
 ---
 
 ## 12. References
 
-_Accumulated continuously._
+**Papers implemented or directly compared against**
 
-1. C. Mohan, F. Haderle, B. Lindsay, H. Pirahesh, P. Schwarz. "ARIES: A Transaction Recovery Method Supporting Fine-Granularity Locking and Partial Rollbacks Using Write-Ahead Logging." *ACM TODS* 17(1), 1992. DOI: 10.1145/128765.128770.
-2. "A Constraint-Driven Relational Database Framework for Robust Digital Retail Management." *ITM Web of Conferences* 91, 04015 (2026). DOI: 10.1051/itmconf/20269104015.
+1. C. Mohan, D. Haderle, B. Lindsay, H. Pirahesh, P. Schwarz. "ARIES: A Transaction Recovery Method Supporting Fine-Granularity Locking and Partial Rollbacks Using Write-Ahead Logging." *ACM Transactions on Database Systems* 17(1), 1992. DOI: 10.1145/128765.128770.
+2. V. Leis, A. Gubichev, A. Mirchev, P. Boncz, A. Kemper, T. Neumann. "How Good Are Query Optimizers, Really?" *PVLDB* 9(3), 2015. DOI: 10.14778/2850583.2850594.
+3. V. Leis, A. Kemper, T. Neumann. "Still Asking: How Good Are Query Optimizers, Really?" *PVLDB* 18(6), 2025.
+4. X. Chen et al. "LEON: A New Framework for ML-Aided Query Optimization." *PVLDB* 16(9), 2023. DOI: 10.14778/3598581.3598597.
+5. "A Constraint-Driven Relational Database Framework for Robust Digital Retail Management." *ITM Web of Conferences* 91, 04015 (2026). DOI: 10.1051/itmconf/20269104015.
 
-_(Full list — Leis 2015, LEON 2023, textbooks — accumulated through Phase 8.)_
+**Implementation references**
+
+6. A. Pavlo et al. CMU 15-445/645 Database Systems, BusTub disk-oriented DBMS project. https://15445.courses.cs.cmu.edu/
+7. J. Arulraj. *databaseology* — curated list of foundational DBMS papers. https://github.com/jarulraj/databaseology
+
+**Textbooks**
+
+8. A. Silberschatz, H. F. Korth, S. Sudarshan. *Database System Concepts*, 7th ed. McGraw-Hill, 2019.
+9. R. Elmasri, S. B. Navathe. *Fundamentals of Database Systems*, 7th ed. Pearson, 2015.
+10. R. Ramakrishnan, J. Gehrke. *Database Management Systems*, 3rd ed. McGraw-Hill, 2002. (Contains the ARIES exposition followed in §7.)
