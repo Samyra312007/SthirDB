@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="460" font-family="Helvetica,Arial,sans-serif" font-size="13">
+<rect width="760" height="460" fill="#ffffff"/>
+<text x="90" y="28" font-size="16" font-weight="bold">Recovery time vs bytes of log scanned</text>
+<rect x="90" y="60" width="575" height="320" fill="#fbfbfb" stroke="#999"/>
+<line x1="90" y1="380.0" x2="665" y2="380.0" stroke="#e4e4e4"/>
+<text x="82" y="384.0" text-anchor="end" fill="#1f4e79">0</text>
+<line x1="90" y1="315.8" x2="665" y2="315.8" stroke="#e4e4e4"/>
+<text x="82" y="319.8" text-anchor="end" fill="#1f4e79">1.1</text>
+<line x1="90" y1="251.6" x2="665" y2="251.6" stroke="#e4e4e4"/>
+<text x="82" y="255.6" text-anchor="end" fill="#1f4e79">2.2</text>
+<line x1="90" y1="187.5" x2="665" y2="187.5" stroke="#e4e4e4"/>
+<text x="82" y="191.5" text-anchor="end" fill="#1f4e79">3.3</text>
+<line x1="90" y1="123.3" x2="665" y2="123.3" stroke="#e4e4e4"/>
+<text x="82" y="127.3" text-anchor="end" fill="#1f4e79">4.4</text>
+<line x1="90" y1="59.1" x2="665" y2="59.1" stroke="#e4e4e4"/>
+<text x="82" y="63.1" text-anchor="end" fill="#1f4e79">5.5</text>
+<text x="38" y="220" text-anchor="middle" fill="#1f4e79" font-weight="bold">recovery time (ms)</text>
+<text x="377" y="430" text-anchor="middle">log bytes scanned during recovery (KiB)</text>
+<polyline points="98.5,113.5 131.8,101.7 173.4,132.3 173.4,113.6 590.0,117.1" fill="none" stroke="#2a9d8f" stroke-width="2.5"/>
+<circle cx="98.5" cy="113.5" r="4" fill="#2a9d8f"/>
+<text x="104.5" y="105.5" font-size="11" anchor="start">100</text>
+<circle cx="131.8" cy="101.7" r="4" fill="#2a9d8f"/>
+<text x="137.8" y="93.7" font-size="11" anchor="start">500</text>
+<circle cx="173.4" cy="132.3" r="4" fill="#2a9d8f"/>
+<text x="179.4" y="124.3" font-size="11" anchor="start">1,000</text>
+<circle cx="173.4" cy="113.6" r="4" fill="#2a9d8f"/>
+<text x="179.4" y="105.6" font-size="11" anchor="start">5,000</text>
+<circle cx="590.0" cy="117.1" r="4" fill="#2a9d8f"/>
+<text x="596.0" y="109.1" font-size="11" anchor="start">none</text>
+<text x="90.0" y="402" text-anchor="middle">0</text>
+<text x="205.0" y="402" text-anchor="middle">95</text>
+<text x="320.0" y="402" text-anchor="middle">191</text>
+<text x="435.0" y="402" text-anchor="middle">286</text>
+<text x="550.0" y="402" text-anchor="middle">382</text>
+<text x="665.0" y="402" text-anchor="middle">477</text>
+</svg>

@@ -1,0 +1,27 @@
+  ... 100/1050 trials (pass=100 fail=0)
+  ... 200/1050 trials (pass=200 fail=0)
+  ... 300/1050 trials (pass=300 fail=0)
+  ... 400/1050 trials (pass=400 fail=0)
+  ... 500/1050 trials (pass=500 fail=0)
+  ... 600/1050 trials (pass=600 fail=0)
+  ... 700/1050 trials (pass=700 fail=0)
+  ... 800/1050 trials (pass=800 fail=0)
+  ... 900/1050 trials (pass=900 fail=0)
+  ... 1000/1050 trials (pass=1000 fail=0)
+
+Crash-injection harness: 1050 trials in 43.4 s
+  crashed mid-run : 176
+  passed          : 1050 (100.00%)
+  failed          : 0
+
+| crash point | trials | pass | pass rate |
+|---|---:|---:|---:|
+| after_log_before_page | 150 | 150 | 100.00% |
+| after_page_before_commit | 150 | 150 | 100.00% |
+| after_commit_before_page_flush | 150 | 150 | 100.00% |
+| mid_page_flush | 150 | 150 | 100.00% |
+| mid_checkpoint | 150 | 150 | 100.00% |
+| during_undo | 150 | 150 | 100.00% |
+| during_recovery | 150 | 150 | 100.00% |
+
+CSV: docs/evidence/phase5b_trials.csv

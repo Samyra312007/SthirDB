@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="460" font-family="Helvetica,Arial,sans-serif" font-size="13">
+<rect width="760" height="460" fill="#ffffff"/>
+<text x="90" y="28" font-size="16" font-weight="bold">Throughput vs recovery time by checkpoint interval</text>
+<rect x="90" y="60" width="575" height="320" fill="#fbfbfb" stroke="#999"/>
+<line x1="90" y1="380.0" x2="665" y2="380.0" stroke="#e4e4e4"/>
+<text x="82" y="384.0" text-anchor="end" fill="#1f4e79">0</text>
+<line x1="90" y1="316.0" x2="665" y2="316.0" stroke="#e4e4e4"/>
+<text x="82" y="320.0" text-anchor="end" fill="#1f4e79">110.3</text>
+<line x1="90" y1="252.0" x2="665" y2="252.0" stroke="#e4e4e4"/>
+<text x="82" y="256.0" text-anchor="end" fill="#1f4e79">220.6</text>
+<line x1="90" y1="188.0" x2="665" y2="188.0" stroke="#e4e4e4"/>
+<text x="82" y="192.0" text-anchor="end" fill="#1f4e79">331</text>
+<line x1="90" y1="124.0" x2="665" y2="124.0" stroke="#e4e4e4"/>
+<text x="82" y="128.0" text-anchor="end" fill="#1f4e79">441.3</text>
+<line x1="90" y1="60.0" x2="665" y2="60.0" stroke="#e4e4e4"/>
+<text x="82" y="64.0" text-anchor="end" fill="#1f4e79">551.6</text>
+<text x="673" y="384.0" fill="#a33">0</text>
+<text x="673" y="319.8" fill="#a33">1.1</text>
+<text x="673" y="255.6" fill="#a33">2.2</text>
+<text x="673" y="191.5" fill="#a33">3.3</text>
+<text x="673" y="127.3" fill="#a33">4.4</text>
+<text x="673" y="63.1" fill="#a33">5.5</text>
+<text x="38" y="220" text-anchor="middle" fill="#1f4e79" font-weight="bold">throughput (txn/s)</text>
+<text x="742" y="220" text-anchor="middle" fill="#a33" font-weight="bold" transform="rotate(90 742 220)">recovery time (ms)</text>
+<text x="377" y="430" text-anchor="middle">checkpoint interval (log records)</text>
+<polyline points="90.0,102.9 233.8,101.7 377.5,102.8 521.2,102.6 665.0,103.3" fill="none" stroke="#1f77b4" stroke-width="2.5"/>
+<circle cx="90.0" cy="102.9" r="4" fill="#1f77b4"/>
+<circle cx="233.8" cy="101.7" r="4" fill="#1f77b4"/>
+<circle cx="377.5" cy="102.8" r="4" fill="#1f77b4"/>
+<circle cx="521.2" cy="102.6" r="4" fill="#1f77b4"/>
+<circle cx="665.0" cy="103.3" r="4" fill="#1f77b4"/>
+<polyline points="90.0,117.1 233.8,113.5 377.5,101.7 521.2,132.3 665.0,113.6" fill="none" stroke="#d62728" stroke-width="2.5"/>
+<circle cx="90.0" cy="117.1" r="4" fill="#d62728"/>
+<circle cx="233.8" cy="113.5" r="4" fill="#d62728"/>
+<circle cx="377.5" cy="101.7" r="4" fill="#d62728"/>
+<circle cx="521.2" cy="132.3" r="4" fill="#d62728"/>
+<circle cx="665.0" cy="113.6" r="4" fill="#d62728"/>
+<text x="90.0" y="402" text-anchor="middle">none</text>
+<text x="233.8" y="402" text-anchor="middle">100</text>
+<text x="377.5" y="402" text-anchor="middle">500</text>
+<text x="521.2" y="402" text-anchor="middle">1,000</text>
+<text x="665.0" y="402" text-anchor="middle">5,000</text>
+<line x1="102" y1="78" x2="128" y2="78" stroke="#1f77b4" stroke-width="2.5"/>
+<text x="134" y="82" font-size="12">throughput (txn/s)</text>
+<line x1="268" y1="78" x2="294" y2="78" stroke="#d62728" stroke-width="2.5"/>
+<text x="300" y="82" font-size="12">recovery time (ms)</text>
+</svg>

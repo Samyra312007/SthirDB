@@ -1,0 +1,113 @@
+# Phase 5B mutation test — a deliberately broken engine must be caught.
+# Each mutation is one compile-time flag; the normal build never sets it.
+
+## skip_commit_flush  (-DSTHIRDB_MUTATION_SKIP_COMMIT_FLUSH)
+```
+  ... 100/140 trials (pass=86 fail=14)
+
+Crash-injection harness: 140 trials in 5.1 s
+  crashed mid-run : 19
+  passed          : 126 (90.00%)
+  failed          : 14
+
+| crash point | trials | pass | pass rate |
+|---|---:|---:|---:|
+| after_log_before_page | 20 | 20 | 100.00% |
+| after_page_before_commit | 20 | 13 | 65.00% |
+| after_commit_before_page_flush | 20 | 13 | 65.00% |
+| mid_page_flush | 20 | 20 | 100.00% |
+| mid_checkpoint | 20 | 20 | 100.00% |
+| during_undo | 20 | 20 | 100.00% |
+| during_recovery | 20 | 20 | 100.00% |
+
+First failures (reproduce with the printed seed and crash point):
+  after_page_before_commit seed=9 skip=1: first verify failed: INVARIANT durability FAIL missing committed txn 1
+INVARIANT atomicity FAIL ledger has 0 rows, oracle 1
+INVARIANT consist
+  after_commit_before_page_flush seed=10 skip=1: first verify failed: INVARIANT durability FAIL missing committed txn 1
+INVARIANT atomicity FAIL ledger has 0 rows, oracle 1
+INVARIANT consist
+  after_page_before_commit seed=16 skip=2: first verify failed: INVARIANT durability FAIL missing committed txn 1
+INVARIANT atomicity FAIL ledger has 0 rows, oracle 2
+INVARIANT consist
+  after_commit_before_page_flush seed=17 skip=2: first verify failed: INVARIANT durability FAIL missing committed txn 1
+INVARIANT atomicity FAIL ledger has 0 rows, oracle 2
+INVARIANT consist
+  after_page_before_commit seed=23 skip=3: first verify failed: INVARIANT durability FAIL missing committed txn 1
+INVARIANT atomicity FAIL ledger has 0 rows, oracle 3
+INVARIANT consist
+  after_commit_before_page_flush seed=24 skip=3: first verify failed: INVARIANT durability FAIL missing committed txn 1
+INVARIANT atomicity FAIL ledger has 0 rows, oracle 3
+INVARIANT consist
+  after_page_before_commit seed=30 skip=4: first verify failed: INVARIANT durability FAIL missing committed txn 1
+INVARIANT atomicity FAIL ledger has 0 rows, oracle 4
+INVARIANT consist
+  after_commit_before_page_flush seed=31 skip=4: first verify failed: INVARIANT durability FAIL missing committed txn 1
+INVARIANT atomicity FAIL ledger has 0 rows, oracle 4
+INVARIANT consist
+  after_page_before_commit seed=37 skip=5: first verify failed: INVARIANT durability FAIL missing committed txn 1
+INVARIANT atomicity FAIL ledger has 0 rows, oracle 5
+INVARIANT consist
+  after_commit_before_page_flush seed=38 skip=5: first verify failed: INVARIANT durability FAIL missing committed txn 1
+INVARIANT atomicity FAIL ledger has 0 rows, oracle 5
+INVARIANT consist
+
+CSV: /tmp/mut_skip_commit_flush.csv
+```
+Result: CAUGHT — 126 passed, 14 failed, as required.
+
+## skip_redo  (-DSTHIRDB_MUTATION_SKIP_REDO)
+```
+  ... 100/140 trials (pass=78 fail=22)
+
+Crash-injection harness: 140 trials in 5.7 s
+  crashed mid-run : 26
+  passed          : 118 (84.29%)
+  failed          : 22
+
+| crash point | trials | pass | pass rate |
+|---|---:|---:|---:|
+| after_log_before_page | 20 | 13 | 65.00% |
+| after_page_before_commit | 20 | 13 | 65.00% |
+| after_commit_before_page_flush | 20 | 13 | 65.00% |
+| mid_page_flush | 20 | 19 | 95.00% |
+| mid_checkpoint | 20 | 20 | 100.00% |
+| during_undo | 20 | 20 | 100.00% |
+| during_recovery | 20 | 20 | 100.00% |
+
+First failures (reproduce with the printed seed and crash point):
+  mid_page_flush seed=4 skip=0: first verify failed: INVARIANT durability FAIL missing committed txn 1
+INVARIANT atomicity FAIL ledger has 0 rows, oracle 8
+INVARIANT consist
+  after_log_before_page seed=8 skip=1: first verify failed: INVARIANT durability FAIL missing committed txn 1
+INVARIANT atomicity FAIL ledger has 0 rows, oracle 1
+INVARIANT consist
+  after_page_before_commit seed=9 skip=1: first verify failed: INVARIANT durability FAIL missing committed txn 1
+INVARIANT atomicity FAIL ledger has 0 rows, oracle 1
+INVARIANT consist
+  after_commit_before_page_flush seed=10 skip=1: first verify failed: INVARIANT durability FAIL missing committed txn 1
+INVARIANT atomicity FAIL ledger has 0 rows, oracle 1
+INVARIANT consist
+  after_log_before_page seed=15 skip=2: first verify failed: INVARIANT durability FAIL missing committed txn 1
+INVARIANT atomicity FAIL ledger has 0 rows, oracle 2
+INVARIANT consist
+  after_page_before_commit seed=16 skip=2: first verify failed: INVARIANT durability FAIL missing committed txn 1
+INVARIANT atomicity FAIL ledger has 0 rows, oracle 2
+INVARIANT consist
+  after_commit_before_page_flush seed=17 skip=2: first verify failed: INVARIANT durability FAIL missing committed txn 1
+INVARIANT atomicity FAIL ledger has 0 rows, oracle 2
+INVARIANT consist
+  after_log_before_page seed=22 skip=3: first verify failed: INVARIANT durability FAIL missing committed txn 1
+INVARIANT atomicity FAIL ledger has 0 rows, oracle 3
+INVARIANT consist
+  after_page_before_commit seed=23 skip=3: first verify failed: INVARIANT durability FAIL missing committed txn 1
+INVARIANT atomicity FAIL ledger has 0 rows, oracle 3
+INVARIANT consist
+  after_commit_before_page_flush seed=24 skip=3: first verify failed: INVARIANT durability FAIL missing committed txn 1
+INVARIANT atomicity FAIL ledger has 0 rows, oracle 3
+INVARIANT consist
+
+CSV: /tmp/mut_skip_redo.csv
+```
+Result: CAUGHT — 118 passed, 22 failed, as required.
+
