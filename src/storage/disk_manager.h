@@ -38,8 +38,10 @@ class DiskManager {
   static void ResetReads();
 
  private:
-  // The single low-level write path for all page writes.
+  // The single low-level write path for all page writes (crash hook + torn
+  // write), and the raw pread/pwrite loop it uses.
   void WriteAt(uint64_t offset, const char* buf, size_t n);
+  void WriteRaw(uint64_t offset, const char* buf, size_t n);
 
   std::string path_;
   int fd_ = -1;

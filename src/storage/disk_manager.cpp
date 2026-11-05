@@ -122,11 +122,7 @@ uint32_t DiskManager::allocate_page() {
   return page_id;
 }
 
-void DiskManager::WriteAt(uint64_t offset, const char* buf, size_t n) {
-  // Single crash-injection hook for every page write (Phase 5B names the
-  // specific hazards; until then this is a no-op outside test runs).
-  crash_point("page_write");
-
+void DiskManager::WriteRaw(uint64_t offset, const char* buf, size_t n) {
   size_t done = 0;
   while (done < n) {
     const ssize_t w = ::pwrite(fd_, buf + done, n - done, static_cast<off_t>(offset + done));
@@ -136,6 +132,30 @@ void DiskManager::WriteAt(uint64_t offset, const char* buf, size_t n) {
     }
     done += static_cast<size_t>(w);
   }
+}
+
+void DiskManager::WriteAt(uint64_t offset, const char* buf, size_t n) {
+  // Single crash-injection hook for every page write.
+  crash_point("page_write");
+
+  // `mid_page_flush` asks for a torn write: half of the page reaches disk and
+  // the process dies, so recovery meets a page that is half old and half new.
+  // The trailing half goes first on purpose. The header (page_lsn, slot_count,
+  // free_space_ptr) lives in the first half, so writing it last means a torn
+  // page always carries the *old* header: page_lsn is lower than the log, redo
+  // is not skipped, and the after-images rebuild the page. Writing the head
+  // first would leave a page whose header advertises newer contents than it
+  // holds, and redo would skip the very records that repair it.
+  // Only armed inside a test run, so normal writes stay one call.
+  if (n == kPageSize && crash_armed("mid_page_flush")) {
+    const size_t half = n / 2;
+    WriteRaw(offset + half, buf + half, n - half);
+    crash_point("mid_page_flush");
+    WriteRaw(offset, buf, half);
+    return;
+  }
+
+  WriteRaw(offset, buf, n);
 }
 
 }  // namespace sthir
