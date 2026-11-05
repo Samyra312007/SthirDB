@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <filesystem>
 #include <iostream>
 #include <queue>
 #include <sstream>
@@ -20,6 +21,8 @@ std::string RecoveryReport::ToString() const {
      << ", losers=" << loser_txns.size()
      << ", checkpoint_lsn=" << checkpoint_lsn
      << ", redo_start_lsn=" << redo_start_lsn
+     << ", wal_bytes=" << wal_size_bytes
+     << ", log_scanned_bytes=" << log_scanned_bytes
      << ", time_ms=" << recovery_time_ms;
   return ss.str();
 }
@@ -46,8 +49,9 @@ uint32_t RecoveryManager::Begin() {
   return tid;
 }
 
-uint64_t RecoveryManager::LogUpdate(uint32_t txn_id, uint32_t page_id, uint16_t slot_num,
-                                    uint16_t offset, std::vector<char> before_image,
+uint64_t RecoveryManager::LogUpdate(uint32_t txn_id, uint32_t table_id, uint32_t page_id,
+                                    uint16_t slot_num, uint16_t offset,
+                                    std::vector<char> before_image,
                                     std::vector<char> after_image) {
   std::lock_guard<std::mutex> lock(latch_);
 
@@ -57,15 +61,17 @@ uint64_t RecoveryManager::LogUpdate(uint32_t txn_id, uint32_t page_id, uint16_t 
     prev_lsn = it->second.last_lsn;
   }
 
-  LogRecord rec = LogRecord::MakeUpdate(txn_id, prev_lsn, page_id, slot_num, offset,
-                                        std::move(before_image), std::move(after_image));
+  LogRecord rec = LogRecord::MakeUpdate(txn_id, prev_lsn, table_id, page_id, slot_num,
+                                        offset, std::move(before_image),
+                                        std::move(after_image));
   uint64_t lsn = wal_->AppendRecord(&rec);
 
   txn_table_[txn_id] = {txn_id, TxnStatus::RUNNING, lsn};
 
   // Add to Dirty Page Table if not present
-  if (dirty_page_table_.find(page_id) == dirty_page_table_.end()) {
-    dirty_page_table_[page_id] = lsn;
+  const uint64_t key = PageKey(table_id, page_id);
+  if (dirty_page_table_.find(key) == dirty_page_table_.end()) {
+    dirty_page_table_[key] = lsn;
   }
 
   records_since_checkpoint_++;
@@ -92,8 +98,11 @@ bool RecoveryManager::Commit(uint32_t txn_id) {
   // Crash injection point: commit durable before dirty page is flushed to disk
   crash_point("after_page_before_commit");
 
-  // Force log tail up to commit LSN (WAL durability guarantee)
+  // Force log tail up to commit LSN (WAL durability guarantee). The mutation
+  // switch is a deliberate Phase 5B fault injection, never set in a real build.
+#ifndef STHIRDB_MUTATION_SKIP_COMMIT_FLUSH
   wal_->FlushUpTo(commit_lsn);
+#endif
 
   crash_point("after_commit_before_page_flush");
 
@@ -121,17 +130,19 @@ bool RecoveryManager::Abort(uint32_t txn_id) {
     }
 
     if (rec.type == LogRecordType::UPDATE) {
-      if (bp_) {
-        Page* p = bp_->fetch_page(rec.page_id);
+      BufferPool* pool = PoolFor(rec.table_id);
+      if (pool != nullptr) {
+        Page* p = pool->fetch_page(rec.page_id);
         if (p) {
           p->WriteTupleAt(rec.slot_num, rec.before_image.data(),
                           static_cast<uint16_t>(rec.before_image.size()));
 
-          LogRecord clr = LogRecord::MakeCLR(txn_id, cur_lsn, rec.page_id, rec.slot_num,
-                                             rec.offset, rec.before_image, rec.prev_lsn);
+          LogRecord clr = LogRecord::MakeCLR(txn_id, cur_lsn, rec.table_id, rec.page_id,
+                                             rec.slot_num, rec.offset, rec.before_image,
+                                             rec.prev_lsn);
           uint64_t clr_lsn = wal_->AppendRecord(&clr);
           p->set_page_lsn(clr_lsn);
-          bp_->unpin_page(rec.page_id, true);
+          pool->unpin_page(rec.page_id, true);
         }
       }
       cur_lsn = rec.prev_lsn;
@@ -169,8 +180,9 @@ uint64_t RecoveryManager::Checkpoint(bool fuzzy) {
   }
 
   std::vector<DptTableEntry> dpt_snapshot;
-  for (const auto& [pid, rlsn] : dirty_page_table_) {
-    dpt_snapshot.push_back({pid, rlsn});
+  for (const auto& [key, rlsn] : dirty_page_table_) {
+    dpt_snapshot.push_back({static_cast<uint32_t>(key >> 32),
+                            static_cast<uint32_t>(key & 0xFFFFFFFFu), rlsn});
   }
 
   LogRecord cp = LogRecord::MakeCheckpoint(std::move(tt_snapshot), std::move(dpt_snapshot));
@@ -190,8 +202,9 @@ void RecoveryManager::CheckIntervalTrigger() {
       tt_snapshot.push_back({tid, static_cast<uint32_t>(info.status), info.last_lsn});
     }
     std::vector<DptTableEntry> dpt_snapshot;
-    for (const auto& [pid, rlsn] : dirty_page_table_) {
-      dpt_snapshot.push_back({pid, rlsn});
+    for (const auto& [key, rlsn] : dirty_page_table_) {
+      dpt_snapshot.push_back({static_cast<uint32_t>(key >> 32),
+                              static_cast<uint32_t>(key & 0xFFFFFFFFu), rlsn});
     }
     LogRecord cp = LogRecord::MakeCheckpoint(std::move(tt_snapshot), std::move(dpt_snapshot));
     uint64_t cp_lsn = wal_->AppendRecord(&cp);
@@ -208,6 +221,11 @@ RecoveryReport RecoveryManager::Recover() {
 
   wal_->Flush();
   auto all_records = wal_->ReadAllRecords(1);
+  {
+    std::error_code ec;
+    const auto size = std::filesystem::file_size(wal_->wal_path(), ec);
+    report.wal_size_bytes = ec ? 0 : static_cast<uint64_t>(size);
+  }
   if (all_records.empty()) {
     const auto end_time = std::chrono::steady_clock::now();
     report.recovery_time_ms =
@@ -237,7 +255,7 @@ RecoveryReport RecoveryManager::Recover() {
       if (te.txn_id >= next_txn_id_) next_txn_id_ = te.txn_id + 1;
     }
     for (const auto& de : cp.dpt_table) {
-      dirty_page_table_[de.page_id] = de.rec_lsn;
+      dirty_page_table_[PageKey(de.table_id, de.page_id)] = de.rec_lsn;
     }
     scan_start_idx = static_cast<size_t>(last_cp_idx + 1);
   }
@@ -264,12 +282,14 @@ RecoveryReport RecoveryManager::Recover() {
         txn_table_[rec.txn_id] = {rec.txn_id, TxnStatus::ABORTED, rec.lsn};
         break;
       case LogRecordType::UPDATE:
-      case LogRecordType::CLR:
+      case LogRecordType::CLR: {
         txn_table_[rec.txn_id] = {rec.txn_id, TxnStatus::RUNNING, rec.lsn};
-        if (dirty_page_table_.find(rec.page_id) == dirty_page_table_.end()) {
-          dirty_page_table_[rec.page_id] = rec.lsn;
+        const uint64_t key = PageKey(rec.table_id, rec.page_id);
+        if (dirty_page_table_.find(key) == dirty_page_table_.end()) {
+          dirty_page_table_[key] = rec.lsn;
         }
         break;
+      }
       default:
         break;
     }
@@ -286,46 +306,58 @@ RecoveryReport RecoveryManager::Recover() {
 
   // Determine RedoLSN
   uint64_t redo_lsn = UINT64_MAX;
-  for (const auto& [pid, rlsn] : dirty_page_table_) {
+  for (const auto& [key, rlsn] : dirty_page_table_) {
     if (rlsn < redo_lsn) redo_lsn = rlsn;
   }
   if (redo_lsn == UINT64_MAX) {
     redo_lsn = (report.checkpoint_lsn > 0) ? report.checkpoint_lsn : 1;
   }
   report.redo_start_lsn = redo_lsn;
+  // Log bytes the Analysis pass had to read: from the last checkpoint record (or
+  // the start of the log when there is none) to the end of the log. Checkpoints
+  // shorten exactly this window, which is what the Phase 5B sweep measures.
+  const uint64_t analysis_start = report.checkpoint_lsn > 0 ? report.checkpoint_lsn : 1;
+  report.log_scanned_bytes =
+      report.wal_size_bytes > analysis_start ? report.wal_size_bytes - analysis_start : 0;
 
   // -------------------------------------------------------------
   // PASS 2: Redo Pass (Repeat History from RedoLSN)
   // -------------------------------------------------------------
+  // STHIRDB_MUTATION_SKIP_REDO exists only for the Phase 5B mutation test:
+  // it produces a build whose recovery forgets to repeat history, which the
+  // harness must catch. It is never defined in a normal build.
+#ifndef STHIRDB_MUTATION_SKIP_REDO
   for (const auto& rec : all_records) {
     if (rec.lsn < redo_lsn) continue;
 
     if (rec.type == LogRecordType::UPDATE || rec.type == LogRecordType::CLR) {
-      auto dpt_it = dirty_page_table_.find(rec.page_id);
+      auto dpt_it = dirty_page_table_.find(PageKey(rec.table_id, rec.page_id));
       if (dpt_it == dirty_page_table_.end() || rec.lsn < dpt_it->second) {
         report.redo_records_skipped++;
         continue;
       }
 
-      if (bp_) {
-        Page* p = bp_->fetch_page(rec.page_id);
+      BufferPool* pool = PoolFor(rec.table_id);
+      if (pool != nullptr) {
+        Page* p = pool->fetch_page(rec.page_id);
         if (p) {
           if (p->page_lsn() >= rec.lsn) {
             // Already reflected on disk page (idempotent skip)
-            bp_->unpin_page(rec.page_id, false);
+            pool->unpin_page(rec.page_id, false);
             report.redo_records_skipped++;
           } else {
             // Reapply after-image
             p->WriteTupleAt(rec.slot_num, rec.after_image.data(),
                             static_cast<uint16_t>(rec.after_image.size()));
             p->set_page_lsn(rec.lsn);
-            bp_->unpin_page(rec.page_id, true);
+            pool->unpin_page(rec.page_id, true);
             report.redo_records_applied++;
           }
         }
       }
     }
   }
+#endif  // STHIRDB_MUTATION_SKIP_REDO
 
   // -------------------------------------------------------------
   // PASS 3: Undo Pass (Rollback Losers in reverse LSN order)
@@ -358,19 +390,21 @@ RecoveryReport RecoveryManager::Recover() {
       }
     } else if (rec.type == LogRecordType::UPDATE) {
       crash_point("during_undo");
-      if (bp_) {
-        Page* p = bp_->fetch_page(rec.page_id);
+      BufferPool* pool = PoolFor(rec.table_id);
+      if (pool != nullptr) {
+        Page* p = pool->fetch_page(rec.page_id);
         if (p) {
           // Apply before-image
           p->WriteTupleAt(rec.slot_num, rec.before_image.data(),
                           static_cast<uint16_t>(rec.before_image.size()));
 
           // Emit Compensation Log Record (CLR)
-          LogRecord clr = LogRecord::MakeCLR(rec.txn_id, cur_lsn, rec.page_id, rec.slot_num,
-                                             rec.offset, rec.before_image, rec.prev_lsn);
+          LogRecord clr = LogRecord::MakeCLR(rec.txn_id, cur_lsn, rec.table_id, rec.page_id,
+                                             rec.slot_num, rec.offset, rec.before_image,
+                                             rec.prev_lsn);
           uint64_t clr_lsn = wal_->AppendRecord(&clr);
           p->set_page_lsn(clr_lsn);
-          bp_->unpin_page(rec.page_id, true);
+          pool->unpin_page(rec.page_id, true);
           report.undo_records_applied++;
         }
       }
@@ -394,9 +428,13 @@ RecoveryReport RecoveryManager::Recover() {
   }
 
   wal_->Flush();
-  if (bp_) {
-    bp_->flush_all();
+  // Every registered table, not just the last one: each pool flushes its own
+  // pages, and flush_all() orders each page write after its WAL record.
+  for (const auto& [tid, pool] : pools_by_table_) {
+    (void)tid;
+    if (pool != nullptr) pool->flush_all();
   }
+  if (pools_by_table_.empty() && bp_) bp_->flush_all();
 
   // Clean loser txns from active table
   for (uint32_t loser_tid : losers) {
@@ -417,7 +455,7 @@ std::unordered_map<uint32_t, TxnInfo> RecoveryManager::GetTransactionTable() con
   return txn_table_;
 }
 
-std::unordered_map<uint32_t, uint64_t> RecoveryManager::GetDirtyPageTable() const {
+std::unordered_map<uint64_t, uint64_t> RecoveryManager::GetDirtyPageTable() const {
   std::lock_guard<std::mutex> lock(latch_);
   return dirty_page_table_;
 }

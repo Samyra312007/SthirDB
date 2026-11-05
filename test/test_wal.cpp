@@ -13,7 +13,7 @@ void test_log_record_serialization() {
   // Test UPDATE record
   std::vector<char> before = {'o', 'l', 'd'};
   std::vector<char> after = {'n', 'e', 'w', '!'};
-  LogRecord u = LogRecord::MakeUpdate(101, 50, 7, 2, 0, before, after);
+  LogRecord u = LogRecord::MakeUpdate(101, 50, 4, 7, 2, 0, before, after);
   u.lsn = 120;
 
   std::vector<char> bytes = u.Serialize();
@@ -28,6 +28,7 @@ void test_log_record_serialization() {
   CHECK(des.type == LogRecordType::UPDATE);
   CHECK_EQ(des.txn_id, 101u);
   CHECK_EQ(des.prev_lsn, 50u);
+  CHECK_EQ(des.table_id, 4u);
   CHECK_EQ(des.page_id, 7u);
   CHECK_EQ(des.slot_num, 2);
   CHECK_EQ(des.before_image.size(), 3u);
@@ -35,7 +36,7 @@ void test_log_record_serialization() {
   CHECK_EQ(des.after_image[0], 'n');
 
   // Test CLR record
-  LogRecord clr = LogRecord::MakeCLR(101, 120, 7, 2, 0, before, 50);
+  LogRecord clr = LogRecord::MakeCLR(101, 120, 4, 7, 2, 0, before, 50);
   clr.lsn = 180;
   bytes = clr.Serialize();
   ok = LogRecord::Deserialize(bytes.data(), bytes.size(), &des, &bytes_read);
@@ -45,7 +46,7 @@ void test_log_record_serialization() {
 
   // Test CHECKPOINT record
   std::vector<TxnTableEntry> tt = {{1, 0, 100}, {2, 0, 150}};
-  std::vector<DptTableEntry> dpt = {{5, 80}, {9, 120}};
+  std::vector<DptTableEntry> dpt = {{1, 5, 80}, {2, 9, 120}};
   LogRecord cp = LogRecord::MakeCheckpoint(tt, dpt);
   cp.lsn = 200;
   bytes = cp.Serialize();
@@ -55,6 +56,7 @@ void test_log_record_serialization() {
   CHECK_EQ(des.txn_table.size(), 2u);
   CHECK_EQ(des.dpt_table.size(), 2u);
   CHECK_EQ(des.txn_table[0].txn_id, 1u);
+  CHECK_EQ(des.dpt_table[1].table_id, 2u);
   CHECK_EQ(des.dpt_table[1].page_id, 9u);
   CHECK_EQ(des.dpt_table[1].rec_lsn, 120u);
 
@@ -74,7 +76,7 @@ void test_wal_manager_append_and_read() {
 
   std::vector<char> bef = {'a'};
   std::vector<char> aft = {'b'};
-  LogRecord u = LogRecord::MakeUpdate(1, lsn1, 10, 0, 0, bef, aft);
+  LogRecord u = LogRecord::MakeUpdate(1, lsn1, 3, 10, 0, 0, bef, aft);
   uint64_t lsn2 = wal.AppendRecord(&u);
   CHECK(lsn2 > lsn1);
 
@@ -93,6 +95,7 @@ void test_wal_manager_append_and_read() {
 
   CHECK(wal.ReadRecord(lsn2, &r2));
   CHECK(r2.type == LogRecordType::UPDATE);
+  CHECK_EQ(r2.table_id, 3u);
   CHECK_EQ(r2.page_id, 10u);
 
   CHECK(wal.ReadRecord(lsn3, &r3));

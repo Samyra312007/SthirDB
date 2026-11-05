@@ -26,6 +26,7 @@ struct TxnTableEntry {
 };
 
 struct DptTableEntry {
+  uint32_t table_id = 0;  // page ids are per table file, so both are needed
   uint32_t page_id = 0;
   uint64_t rec_lsn = 0;
 };
@@ -36,6 +37,7 @@ struct LogRecord {
   LogRecordType type = LogRecordType::INVALID;
   uint32_t txn_id = 0;
   uint64_t prev_lsn = 0;        // Previous LSN for the same transaction
+  uint32_t table_id = 0;        // Which table file page_id belongs to
   uint32_t page_id = 0;
   uint16_t slot_num = 0;
   uint16_t offset = 0;
@@ -52,12 +54,12 @@ struct LogRecord {
   static LogRecord MakeBegin(uint32_t txn_id);
   static LogRecord MakeCommit(uint32_t txn_id, uint64_t prev_lsn);
   static LogRecord MakeAbort(uint32_t txn_id, uint64_t prev_lsn);
-  static LogRecord MakeUpdate(uint32_t txn_id, uint64_t prev_lsn, uint32_t page_id,
-                              uint16_t slot_num, uint16_t offset,
+  static LogRecord MakeUpdate(uint32_t txn_id, uint64_t prev_lsn, uint32_t table_id,
+                              uint32_t page_id, uint16_t slot_num, uint16_t offset,
                               std::vector<char> before_image,
                               std::vector<char> after_image);
-  static LogRecord MakeCLR(uint32_t txn_id, uint64_t prev_lsn, uint32_t page_id,
-                           uint16_t slot_num, uint16_t offset,
+  static LogRecord MakeCLR(uint32_t txn_id, uint64_t prev_lsn, uint32_t table_id,
+                           uint32_t page_id, uint16_t slot_num, uint16_t offset,
                            std::vector<char> after_image, uint64_t undo_nxt_lsn);
   static LogRecord MakeCheckpoint(std::vector<TxnTableEntry> tt,
                                   std::vector<DptTableEntry> dpt);

@@ -96,6 +96,10 @@ struct IndexMetadata {
 struct TableSchema {
   std::string table_name;
   std::string data_file_path;
+  // Stable per-table identifier carried by every WAL record. Page ids restart
+  // at 0 in each table file, so recovery needs this to know which buffer pool
+  // a logged page belongs to (Novelty 2A: multi-table crash recovery).
+  uint32_t table_id = 0;
   std::vector<Column> columns;
   std::vector<std::string> primary_key_columns;
   std::vector<std::vector<std::string>> unique_constraints;

@@ -744,7 +744,8 @@ size_t ExecuteInsert(const InsertPlan& plan, BufferPool* bp, DiskManager* dm, st
     }
 
     if (rm && txn_id != 0) {
-      uint64_t lsn = rm->LogUpdate(txn_id, cur_pid, static_cast<uint16_t>(slot), 0, {}, bytes);
+      uint64_t lsn = rm->LogUpdate(txn_id, schema.table_id, cur_pid,
+                                   static_cast<uint16_t>(slot), 0, {}, bytes);
       page->set_page_lsn(lsn);
     }
     if (checker != nullptr) checker->RecordInsert(schema, tuple);
@@ -836,8 +837,8 @@ size_t ExecuteUpdate(const UpdatePlan& plan, std::unique_ptr<Executor> child,
     bool written = p->WriteTupleAt(tuple.rid().slot_id, bytes.data(), static_cast<uint16_t>(bytes.size()));
     if (written) {
       if (rm && txn_id != 0) {
-        uint64_t lsn = rm->LogUpdate(txn_id, tuple.rid().page_id, tuple.rid().slot_id, 0,
-                                     std::move(old_bytes), bytes);
+        uint64_t lsn = rm->LogUpdate(txn_id, schema.table_id, tuple.rid().page_id,
+                                     tuple.rid().slot_id, 0, std::move(old_bytes), bytes);
         p->set_page_lsn(lsn);
       }
       bp->unpin_page(tuple.rid().page_id, true);
@@ -856,7 +857,8 @@ size_t ExecuteUpdate(const UpdatePlan& plan, std::unique_ptr<Executor> child,
             lm->AcquireExclusive(txn_id, plan.table_name(), RID{last_pid, static_cast<uint16_t>(new_slot), true});
           }
           if (rm && txn_id != 0) {
-            uint64_t lsn = rm->LogUpdate(txn_id, last_pid, static_cast<uint16_t>(new_slot), 0,
+            uint64_t lsn = rm->LogUpdate(txn_id, schema.table_id, last_pid,
+                                         static_cast<uint16_t>(new_slot), 0,
                                          std::move(old_bytes), bytes);
             last_p->set_page_lsn(lsn);
           }
@@ -873,7 +875,8 @@ size_t ExecuteUpdate(const UpdatePlan& plan, std::unique_ptr<Executor> child,
                 lm->AcquireExclusive(txn_id, plan.table_name(), RID{new_pid, static_cast<uint16_t>(new_slot), true});
               }
               if (rm && txn_id != 0) {
-                uint64_t lsn = rm->LogUpdate(txn_id, new_pid, static_cast<uint16_t>(new_slot), 0,
+                uint64_t lsn = rm->LogUpdate(txn_id, schema.table_id, new_pid,
+                                             static_cast<uint16_t>(new_slot), 0,
                                              std::move(old_bytes), bytes);
                 new_p->set_page_lsn(lsn);
               }
@@ -883,7 +886,8 @@ size_t ExecuteUpdate(const UpdatePlan& plan, std::unique_ptr<Executor> child,
         }
       } else {
         if (rm && txn_id != 0) {
-          uint64_t lsn = rm->LogUpdate(txn_id, tuple.rid().page_id, static_cast<uint16_t>(new_slot), 0,
+          uint64_t lsn = rm->LogUpdate(txn_id, schema.table_id, tuple.rid().page_id,
+                                       static_cast<uint16_t>(new_slot), 0,
                                        std::move(old_bytes), bytes);
           p->set_page_lsn(lsn);
         }
@@ -971,7 +975,7 @@ size_t ExecuteDelete(const DeletePlan& plan, std::unique_ptr<Executor> child,
 
     if (p->DeleteTuple(rid.slot_id)) {
       if (rm && txn_id != 0) {
-        uint64_t lsn = rm->LogUpdate(txn_id, rid.page_id, rid.slot_id, 0,
+        uint64_t lsn = rm->LogUpdate(txn_id, schema.table_id, rid.page_id, rid.slot_id, 0,
                                      std::move(old_bytes), {});
         p->set_page_lsn(lsn);
       }

@@ -41,14 +41,15 @@ LogRecord LogRecord::MakeAbort(uint32_t txn_id, uint64_t prev_lsn) {
   return rec;
 }
 
-LogRecord LogRecord::MakeUpdate(uint32_t txn_id, uint64_t prev_lsn, uint32_t page_id,
-                                uint16_t slot_num, uint16_t offset,
+LogRecord LogRecord::MakeUpdate(uint32_t txn_id, uint64_t prev_lsn, uint32_t table_id,
+                                uint32_t page_id, uint16_t slot_num, uint16_t offset,
                                 std::vector<char> before_image,
                                 std::vector<char> after_image) {
   LogRecord rec;
   rec.type = LogRecordType::UPDATE;
   rec.txn_id = txn_id;
   rec.prev_lsn = prev_lsn;
+  rec.table_id = table_id;
   rec.page_id = page_id;
   rec.slot_num = slot_num;
   rec.offset = offset;
@@ -58,13 +59,14 @@ LogRecord LogRecord::MakeUpdate(uint32_t txn_id, uint64_t prev_lsn, uint32_t pag
   return rec;
 }
 
-LogRecord LogRecord::MakeCLR(uint32_t txn_id, uint64_t prev_lsn, uint32_t page_id,
-                             uint16_t slot_num, uint16_t offset,
+LogRecord LogRecord::MakeCLR(uint32_t txn_id, uint64_t prev_lsn, uint32_t table_id,
+                             uint32_t page_id, uint16_t slot_num, uint16_t offset,
                              std::vector<char> after_image, uint64_t undo_nxt_lsn) {
   LogRecord rec;
   rec.type = LogRecordType::CLR;
   rec.txn_id = txn_id;
   rec.prev_lsn = prev_lsn;
+  rec.table_id = table_id;
   rec.page_id = page_id;
   rec.slot_num = slot_num;
   rec.offset = offset;
@@ -85,17 +87,17 @@ LogRecord LogRecord::MakeCheckpoint(std::vector<TxnTableEntry> tt,
 
 std::vector<char> LogRecord::Serialize() const {
   // Compute total size:
-  // 4 (total_size) + 8 (lsn) + 4 (type) + 4 (txn_id) + 8 (prev_lsn) + 4 (page_id)
-  // + 2 (slot_num) + 2 (offset) + 4 (length) + 8 (undo_nxt_lsn)
-  // + 4 (before_len) + before_bytes + 4 (after_len) + after_bytes
-  // + (if checkpoint: 4 (tt_count) + count*16 + 4 (dpt_count) + count*12)
-  size_t payload_size = 4 + 8 + 4 + 4 + 8 + 4 + 2 + 2 + 4 + 8 +
+  // 4 (total_size) + 8 (lsn) + 4 (type) + 4 (txn_id) + 8 (prev_lsn)
+  // + 4 (table_id) + 4 (page_id) + 2 (slot_num) + 2 (offset) + 4 (length)
+  // + 8 (undo_nxt_lsn) + 4 (before_len) + before_bytes + 4 (after_len) + after_bytes
+  // + (if checkpoint: 4 (tt_count) + count*16 + 4 (dpt_count) + count*16)
+  size_t payload_size = 4 + 8 + 4 + 4 + 8 + 4 + 4 + 2 + 2 + 4 + 8 +
                         4 + before_image.size() +
                         4 + after_image.size();
 
   if (type == LogRecordType::CHECKPOINT) {
     payload_size += 4 + txn_table.size() * (4 + 4 + 8);
-    payload_size += 4 + dpt_table.size() * (4 + 8);
+    payload_size += 4 + dpt_table.size() * (4 + 4 + 8);
   }
 
   std::vector<char> buf(payload_size);
@@ -113,6 +115,7 @@ std::vector<char> LogRecord::Serialize() const {
   write_val(raw_type);
   write_val(txn_id);
   write_val(prev_lsn);
+  write_val(table_id);
   write_val(page_id);
   write_val(slot_num);
   write_val(offset);
@@ -145,6 +148,7 @@ std::vector<char> LogRecord::Serialize() const {
     uint32_t dpt_count = static_cast<uint32_t>(dpt_table.size());
     write_val(dpt_count);
     for (const auto& entry : dpt_table) {
+      write_val(entry.table_id);
       write_val(entry.page_id);
       write_val(entry.rec_lsn);
     }
@@ -158,7 +162,7 @@ bool LogRecord::Deserialize(const char* buf, size_t size, LogRecord* out, size_t
 
   uint32_t total_size = 0;
   std::memcpy(&total_size, buf, 4);
-  if (total_size < 48 || total_size > size) {
+  if (total_size < 52 || total_size > size) {
     return false;
   }
 
@@ -174,6 +178,7 @@ bool LogRecord::Deserialize(const char* buf, size_t size, LogRecord* out, size_t
   out->type = static_cast<LogRecordType>(raw_type);
   read_val(out->txn_id);
   read_val(out->prev_lsn);
+  read_val(out->table_id);
   read_val(out->page_id);
   read_val(out->slot_num);
   read_val(out->offset);
@@ -216,9 +221,10 @@ bool LogRecord::Deserialize(const char* buf, size_t size, LogRecord* out, size_t
     if (ptr + 4 > buf + total_size) return false;
     uint32_t dpt_count = 0;
     read_val(dpt_count);
-    if (ptr + dpt_count * 12 > buf + total_size) return false;
+    if (ptr + dpt_count * 16 > buf + total_size) return false;
     out->dpt_table.resize(dpt_count);
     for (uint32_t i = 0; i < dpt_count; ++i) {
+      read_val(out->dpt_table[i].table_id);
       read_val(out->dpt_table[i].page_id);
       read_val(out->dpt_table[i].rec_lsn);
     }
@@ -233,7 +239,8 @@ std::string LogRecord::ToString() const {
   ss << "LogRecord(LSN=" << lsn << ", Type=" << LogRecordTypeToString(type)
      << ", Txn=" << txn_id << ", PrevLSN=" << prev_lsn;
   if (type == LogRecordType::UPDATE || type == LogRecordType::CLR) {
-    ss << ", Page=" << page_id << ", Slot=" << slot_num << ", Len=" << length;
+    ss << ", Table=" << table_id << ", Page=" << page_id << ", Slot=" << slot_num
+       << ", Len=" << length;
     if (type == LogRecordType::CLR) {
       ss << ", UndoNxtLSN=" << undo_nxt_lsn;
     }

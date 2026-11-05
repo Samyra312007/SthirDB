@@ -152,9 +152,13 @@ ExecutionEngine::~ExecutionEngine() {
 RecoveryReport ExecutionEngine::Recover() {
   if (catalog_) {
     catalog_->Load();
+    // Register every table before replay: a WAL record names a table id, and
+    // recovery must write each logged page back into its own file.
     for (const auto& name : catalog_->GetTableNames()) {
       StorageContext* sc = GetStorage(name);
-      if (sc && sc->bp) {
+      const TableSchema* schema = catalog_->GetTable(name);
+      if (sc && sc->bp && schema) {
+        recovery_->RegisterTable(schema->table_id, sc->bp.get());
         recovery_->SetBufferPool(sc->bp.get());
       }
     }
@@ -219,6 +223,7 @@ ExecutionEngine::StorageContext* ExecutionEngine::GetStorage(const std::string& 
   }
   if (recovery_) {
     recovery_->SetBufferPool(sc->bp.get());
+    recovery_->RegisterTable(schema ? schema->table_id : 0, sc->bp.get());
   }
 
   auto* ptr = sc.get();

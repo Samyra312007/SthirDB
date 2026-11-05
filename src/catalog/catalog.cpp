@@ -352,6 +352,11 @@ bool Catalog::Load(std::string* err) {
     const json::Value* v_name = item.Find("name");
     if (v_name && v_name->type == json::Type::String) s.table_name = v_name->str_val;
 
+    const json::Value* v_id = item.Find("table_id");
+    if (v_id && v_id->type == json::Type::Number) {
+      s.table_id = static_cast<uint32_t>(v_id->num_val);
+    }
+
     const json::Value* v_fp = item.Find("file_path");
     if (v_fp && v_fp->type == json::Type::String) s.data_file_path = v_fp->str_val;
 
@@ -518,6 +523,14 @@ bool Catalog::Load(std::string* err) {
     tables_[ToLower(s.table_name)] = s;
   }
 
+  // Catalogs written before table ids existed load with 0; hand them out in
+  // load order so the in-memory view is still unique, then persist on next save.
+  uint32_t next_id = 1;
+  for (const auto& kv : tables_) next_id = std::max(next_id, kv.second.table_id + 1);
+  for (auto& kv : tables_) {
+    if (kv.second.table_id == 0) kv.second.table_id = next_id++;
+  }
+
   return true;
 }
 
@@ -544,6 +557,7 @@ bool Catalog::Save(std::string* err) const {
     const TableSchema& s = kv.second;
     f << "    {\n";
     f << "      \"name\": "; json::EscapeString(s.table_name, f); f << ",\n";
+    f << "      \"table_id\": " << s.table_id << ",\n";
     f << "      \"file_path\": "; json::EscapeString(s.data_file_path, f); f << ",\n";
 
     // columns
@@ -731,6 +745,11 @@ bool Catalog::CreateTable(const TableSchema& schema, std::string* err) {
   if (saved_schema.data_file_path.empty()) {
     saved_schema.data_file_path = "./data/retail/" + lower_name + ".dat";
   }
+  // Table ids are never reused, so a page id in the WAL always resolves to the
+  // table that was current when the record was written.
+  uint32_t next_id = 1;
+  for (const auto& kv : tables_) next_id = std::max(next_id, kv.second.table_id + 1);
+  if (saved_schema.table_id == 0) saved_schema.table_id = next_id;
 
   tables_[lower_name] = saved_schema;
   return Save(err);
