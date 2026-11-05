@@ -16,6 +16,7 @@
 #include "storage/row.h"
 #include "workload/anomaly_injector.h"
 #include "workload/benchmark.h"
+#include "workload/crash_trial.h"
 #include "workload/retail_gen.h"
 
 namespace fs = std::filesystem;
@@ -56,7 +57,21 @@ void PrintUsage() {
       "  sthirdb bench [--threads 100,300,500] [--iters N] [--warmup N]\n"
       "                [--constraints on|off] [--frames N] [--query <sql>]\n"
       "                             Run the concurrent reporting-query benchmark;\n"
-      "                             prints avg/P99 latency and failures.\n",
+      "                             prints avg/P99 latency and failures.\n"
+      "  sthirdb trial-init --dir <path>\n"
+      "                             Create the crash-trial schema (Stock+Ledger).\n"
+      "  sthirdb trial-run --dir <path> --seed N [--txns N] [--checkpoint N]\n"
+      "                    [--crash-end]\n"
+      "                             Run one deterministic trial workload; appends\n"
+      "                             acknowledged commits to <dir>/oracle.log.\n"
+      "  sthirdb trial-recover --dir <path>\n"
+      "                             Run ARIES recovery and print its metrics.\n"
+      "  sthirdb trial-verify --dir <path> [--oracle <file>]\n"
+      "                             Check durability, atomicity, consistency and\n"
+      "                             golden-state invariants; prints PASS/FAIL.\n"
+      "  sthirdb crash-harness [--trials N] [--bin <path>] [--csv <path>]\n"
+      "                        [--dir <path>] [--txns N]\n"
+      "                             Randomized subprocess crash-injection harness.\n",
       sthir::kVersion);
 }
 
@@ -662,6 +677,102 @@ int CmdBench(int argc, char** argv) {
   return 0;
 }
 
+// ----------------------------------------------------------------
+// Novelty 2A: crash-injection trial commands
+// ----------------------------------------------------------------
+
+std::string ArgValue(int argc, char** argv, const char* name, const std::string& fallback) {
+  for (int i = 2; i + 1 < argc; ++i) {
+    if (std::string(argv[i]) == name) return argv[i + 1];
+  }
+  return fallback;
+}
+
+bool HasFlag(int argc, char** argv, const char* name) {
+  for (int i = 2; i < argc; ++i) {
+    if (std::string(argv[i]) == name) return true;
+  }
+  return false;
+}
+
+int CmdTrialInit(int argc, char** argv) {
+  const std::string dir = ArgValue(argc, argv, "--dir", "./data/trial");
+  std::string err;
+  if (!sthir::TrialInit(dir, &err)) {
+    std::fprintf(stderr, "trial-init: %s\n", err.c_str());
+    return 1;
+  }
+  std::printf("trial-init: %s ready\n", dir.c_str());
+  return 0;
+}
+
+int CmdTrialRun(int argc, char** argv) {
+  sthir::TrialConfig cfg;
+  cfg.dir = ArgValue(argc, argv, "--dir", cfg.dir);
+  cfg.seed = std::strtoull(ArgValue(argc, argv, "--seed", "1").c_str(), nullptr, 10);
+  cfg.txns = static_cast<size_t>(
+      std::strtoull(ArgValue(argc, argv, "--txns", "8").c_str(), nullptr, 10));
+  cfg.checkpoint_interval = static_cast<size_t>(
+      std::strtoull(ArgValue(argc, argv, "--checkpoint", "0").c_str(), nullptr, 10));
+  cfg.crash_at_end = HasFlag(argc, argv, "--crash-end");
+
+  std::string err;
+  sthir::TrialRunResult result;
+  if (!sthir::TrialRun(cfg, &result, &err)) {
+    std::fprintf(stderr, "trial-run: %s\n", err.c_str());
+    return 1;
+  }
+  std::printf("trial-run: seed=%llu committed=%zu elapsed_ms=%.3f wal_bytes=%llu\n",
+              static_cast<unsigned long long>(cfg.seed), result.committed, result.elapsed_ms,
+              static_cast<unsigned long long>(result.wal_bytes));
+  return 0;
+}
+
+int CmdTrialRecover(int argc, char** argv) {
+  const std::string dir = ArgValue(argc, argv, "--dir", "./data/trial");
+  std::string err;
+  std::string out;
+  if (!sthir::TrialRecover(dir, &out, &err)) {
+    std::fprintf(stderr, "trial-recover: %s\n", err.c_str());
+    return 1;
+  }
+  std::printf("%s", out.c_str());
+  return 0;
+}
+
+int CmdTrialVerify(int argc, char** argv) {
+  const std::string dir = ArgValue(argc, argv, "--dir", "./data/trial");
+  const std::string oracle = ArgValue(argc, argv, "--oracle", dir + "/oracle.log");
+  std::string err;
+  std::string out;
+  bool ok = false;
+  if (!sthir::TrialVerify(dir, oracle, &out, &ok, &err)) {
+    std::fprintf(stderr, "trial-verify: %s\n", err.c_str());
+    return 1;
+  }
+  std::printf("%s", out.c_str());
+  return ok ? 0 : 1;
+}
+
+int CmdCrashHarness(int argc, char** argv) {
+  sthir::HarnessConfig cfg;
+  cfg.trials = static_cast<size_t>(
+      std::strtoull(ArgValue(argc, argv, "--trials", "1000").c_str(), nullptr, 10));
+  cfg.txns = static_cast<size_t>(
+      std::strtoull(ArgValue(argc, argv, "--txns", "8").c_str(), nullptr, 10));
+  cfg.seed_base = std::strtoull(ArgValue(argc, argv, "--seed", "1").c_str(), nullptr, 10);
+  cfg.bin = ArgValue(argc, argv, "--bin", cfg.bin);
+  cfg.dir = ArgValue(argc, argv, "--dir", cfg.dir);
+  cfg.csv_path = ArgValue(argc, argv, "--csv", cfg.csv_path);
+
+  std::string err;
+  if (!sthir::RunCrashHarness(cfg, &err)) {
+    std::fprintf(stderr, "crash-harness: %s\n", err.c_str());
+    return 1;
+  }
+  return 0;
+}
+
 int main(int argc, char** argv) {
   if (argc < 2) {
     PrintUsage();
@@ -764,6 +875,11 @@ int main(int argc, char** argv) {
   if (cmd == "bench") {
     return CmdBench(argc, argv);
   }
+  if (cmd == "trial-init") return CmdTrialInit(argc, argv);
+  if (cmd == "trial-run") return CmdTrialRun(argc, argv);
+  if (cmd == "trial-recover") return CmdTrialRecover(argc, argv);
+  if (cmd == "trial-verify") return CmdTrialVerify(argc, argv);
+  if (cmd == "crash-harness") return CmdCrashHarness(argc, argv);
 
   std::fprintf(stderr, "sthirdb: unknown command '%s'\n", cmd.c_str());
   PrintUsage();
