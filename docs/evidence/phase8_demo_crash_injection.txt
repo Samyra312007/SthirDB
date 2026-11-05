@@ -1,0 +1,22 @@
+=== SthirDB demo: Novelty 2A — randomized crash injection ===
+
+Crash-injection harness: 70 trials in 2.7 s
+  crashed mid-run : 26
+  passed          : 70 (100.00%)
+  failed          : 0
+
+| crash point | trials | pass | pass rate |
+|---|---:|---:|---:|
+| after_log_before_page | 10 | 10 | 100.00% |
+| after_page_before_commit | 10 | 10 | 100.00% |
+| after_commit_before_page_flush | 10 | 10 | 100.00% |
+| mid_page_flush | 10 | 10 | 100.00% |
+| mid_checkpoint | 10 | 10 | 100.00% |
+| during_undo | 10 | 10 | 100.00% |
+| during_recovery | 10 | 10 | 100.00% |
+
+CSV: docs/evidence/phase8_demo_crash_trials.csv
+
+crash points covered: 7 / 7
+trials passed       : 70 / 70
+RESULT: PASS — every crash recovered to a correct state.

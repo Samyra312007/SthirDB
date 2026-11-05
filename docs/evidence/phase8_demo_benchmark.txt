@@ -1,0 +1,49 @@
+=== SthirDB demo: constraints vs anomalies, and concurrent latency ===
+
+-- anomaly injection, constrained schema (3 classes x 50)
+### Anomaly interception — constrained, 3 classes x 50
+
+| class | constraint | injected | blocked | accepted | interception % |
+|---|---|---:|---:|---:|---:|
+| duplicate_email | UNIQUE violation | 50 | 50 | 0 | 100.0% |
+| negative_stock | CHECK violation | 50 | 50 | 0 | 100.0% |
+| missing_fk | FOREIGN KEY violation | 50 | 50 | 0 | 100.0% |
+| TOTAL | - | 150 | 150 | 0 | 100.0% |
+
+_generated in 316 ms_
+
+-- the same injections against the unconstrained schema
+### Anomaly interception — unconstrained, 3 classes x 50
+
+| class | constraint | injected | blocked | accepted | interception % |
+|---|---|---:|---:|---:|---:|
+| duplicate_email | UNIQUE violation | 50 | 0 | 50 | 0.0% |
+| negative_stock | CHECK violation | 50 | 0 | 50 | 0.0% |
+| missing_fk | FOREIGN KEY violation | 50 | 0 | 50 | 0.0% |
+| TOTAL | - | 150 | 0 | 150 | 0.0% |
+
+_generated in 312 ms_
+
+-- concurrent reporting query, constrained schema
+bench: 8 threads done (queries=16 failures=0 avg=515.4 ms)
+bench: 32 threads done (queries=64 failures=0 avg=746.7 ms)
+### Concurrent reporting query — constrained, 2 iteration(s) per thread, pool frames=8192
+
+| threads | queries | failures | avg ms | p99 ms | min ms | max ms |
+|---:|---:|---:|---:|---:|---:|---:|
+| 8 | 16 | 0 | 515.4 | 585.1 | 430.5 | 585.1 |
+| 32 | 64 | 0 | 746.7 | 950.0 | 447.5 | 950.0 |
+
+-- concurrent reporting query, unconstrained schema
+bench: 8 threads done (queries=16 failures=0 avg=455.9 ms)
+bench: 32 threads done (queries=64 failures=0 avg=765.2 ms)
+### Concurrent reporting query — unconstrained, 2 iteration(s) per thread, pool frames=8192
+
+| threads | queries | failures | avg ms | p99 ms | min ms | max ms |
+|---:|---:|---:|---:|---:|---:|---:|
+| 8 | 16 | 0 | 455.9 | 461.8 | 450.2 | 461.8 |
+| 32 | 64 | 0 | 765.2 | 822.5 | 528.5 | 822.5 |
+
+constrained blocks recorded : 150
+query failures (both modes): 0
+RESULT: PASS — constraints intercept every injected anomaly, queries never fail.

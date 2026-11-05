@@ -1,0 +1,71 @@
+=== SthirDB demo: the optimizer picks the cheaper plan ===
+
+---- Query A: one row out of 5,000 (a selective predicate)
+QUERY: SELECT ItemName FROM Items WHERE ItemID = 4242
++---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| QUERY PLAN                                                                                                                                                                                                                                                                |
++---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| Chosen access path: IndexScan(idx_items_pk)+Filter
+Project(ItemName)  [rows=1, cost=12]
+  Filter  [rows=1, cost=12]
+    IndexScan(Items using idx_items_pk on ItemID, keys [4241, 4243])  [rows=1, cost=12]
+Rejected alternatives:
+  SeqScan+Filter  cost=25.0  rows=1.0
+ |
++---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+(1 row(s))
+Chosen plan (IndexScan(idx_items_pk)+Filter):
+Project(ItemName)  [rows=1, cost=12]
+  Filter  [rows=1, cost=12]
+    IndexScan(Items using idx_items_pk on ItemID, keys [4241, 4243])  [rows=1, cost=12]
+
++-------------------------+--------------------------------+
+| METRIC                  | VALUE                          |
++-------------------------+--------------------------------+
+| chosen_path             | IndexScan(idx_items_pk)+Filter |
+| estimated_cost          | 12.0                           |
+| rows_estimated          | 1                              |
+| actual_time_ms          | 0.043                          |
+| rows_actual             | 1                              |
+| pages_read              | 11                             |
+| rejected SeqScan+Filter | cost=25.0 rows=1               |
+| estimation_error        | 1.00x                          |
++-------------------------+--------------------------------+
+(8 row(s))
+
+---- Query B: almost every row (a non-selective predicate)
+QUERY: SELECT COUNT(*) FROM Items WHERE RetailPrice > 100
++----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| QUERY PLAN                                                                                                                                                                                         |
++----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| Chosen access path: SeqScan+Filter
+Project(COUNT(*))  [rows=1, cost=25]
+  Aggregate(group_by=[])  [rows=1, cost=25]
+    Filter  [rows=3929.8, cost=25]
+      SeqScan(Items)  [rows=5000, cost=25]
+ |
++----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+(1 row(s))
+Chosen plan (SeqScan+Filter):
+Project(COUNT(*))  [rows=1, cost=25]
+  Aggregate(group_by=[])  [rows=1, cost=25]
+    Filter  [rows=3929.8, cost=25]
+      SeqScan(Items)  [rows=5000, cost=25]
+
++------------------+----------------+
+| METRIC           | VALUE          |
++------------------+----------------+
+| chosen_path      | SeqScan+Filter |
+| estimated_cost   | 25.0           |
+| rows_estimated   | 1              |
+| actual_time_ms   | 2.051          |
+| rows_actual      | 1              |
+| pages_read       | 25             |
+| estimation_error | 1.00x          |
++------------------+----------------+
+(7 row(s))
+
+chosen for A: IndexScan(idx_items_pk)+Filter
+chosen for B: SeqScan+Filter
+
+RESULT: PASS — index for the selective query, sequential scan for the broad one.

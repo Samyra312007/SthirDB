@@ -1,0 +1,51 @@
+=== SthirDB demo: index scan vs sequential scan ===
+
+-- building the retail dataset (seed 42, deterministic) ...
+
+QUERY: SELECT ItemName FROM Items WHERE ItemID = 4242
+
+-- IndexScan (the primary-key index created by the constraint)
+Chosen plan (IndexScan(idx_items_pk)+Filter):
+Project(ItemName)  [rows=1, cost=12]
+  Filter  [rows=1, cost=12]
+    IndexScan(Items using idx_items_pk on ItemID, keys [4241, 4243])  [rows=1, cost=12]
+
++-------------------------+--------------------------------+
+| METRIC                  | VALUE                          |
++-------------------------+--------------------------------+
+| chosen_path             | IndexScan(idx_items_pk)+Filter |
+| estimated_cost          | 12.0                           |
+| rows_estimated          | 1                              |
+| actual_time_ms          | 0.039                          |
+| rows_actual             | 1                              |
+| pages_read              | 11                             |
+| rejected SeqScan+Filter | cost=25.0 rows=1               |
+| estimation_error        | 1.00x                          |
++-------------------------+--------------------------------+
+(8 row(s))
+
+-- SeqScan (the same rows, every page of Items read)
+Chosen plan (SeqScan+Filter):
+Project(ItemName)  [rows=1, cost=25]
+  Filter  [rows=1, cost=25]
+    SeqScan(Items)  [rows=5000, cost=25]
+
++------------------+----------------+
+| METRIC           | VALUE          |
++------------------+----------------+
+| chosen_path      | SeqScan+Filter |
+| estimated_cost   | 25.0           |
+| rows_estimated   | 1              |
+| actual_time_ms   | 1.788          |
+| rows_actual      | 1              |
+| pages_read       | 25             |
+| estimation_error | 1.00x          |
++------------------+----------------+
+(7 row(s))
+
+| path | pages read | time (ms) | rows |
+|---|---:|---:|---:|
+| IndexScan(idx_items_pk) | 11 | 0.026 | 1 |
+| SeqScan(Items) | 25 | 1.326 | 1 |
+
+RESULT: PASS — identical rows (1), 11 vs 25 pages read.

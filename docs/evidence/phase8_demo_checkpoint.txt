@@ -1,0 +1,16 @@
+=== SthirDB demo: Novelty 2B — checkpoint frequency ===
+
+| checkpoint interval | throughput (txn/s) | recovery (ms) | log bytes scanned |
+|---|---:|---:|---:|
+| none (run 1) | 475.2 | 1.36363 | 106580 |
+| none (run 2) | 482.7 | 1.36881 | 106580 |
+| 500 (run 1) | 478.2 | 1.11081 | 35500 |
+| 500 (run 2) | 491.7 | 1.09173 | 35500 |
+
+Full sweep and figures:
+  docs/evidence/phase5b_checkpoint_sweep.md
+  docs/evidence/phase5b_plot_interval.svg   (throughput + recovery vs interval)
+  docs/evidence/phase5b_plot_logsize.svg    (recovery vs log bytes scanned)
+
+RESULT: PASS — both settings recovered; checkpoints shrink the log the
+        analysis pass reads without a measurable throughput cost.

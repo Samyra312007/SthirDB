@@ -1,0 +1,17 @@
+=== SthirDB demo: ARIES recovery (Tests A-H) ===
+PASS Test A (committed survives)
+test_b report: RecoveryReport: analysis_scanned=5, redo_applied=2, redo_skipped=0, undo_applied=1, losers=1, checkpoint_lsn=0, redo_start_lsn=61, wal_bytes=351, log_scanned_bytes=350, time_ms=1.53424
+loser: 2
+PASS Test B (uncommitted vanishes)
+PASS Test C (partial transaction rolled back)
+PASS Test D (steal + no-force)
+PASS Test E (checkpoint bounds work)
+PASS Test F (crash during undo)
+Test G evidence: WAL txns=200, analysis_scanned=600, recovery_time_ms=1.37962
+PASS Test G (recovery time vs log size)
+PASS Test H (page_lsn monotonicity check)
+All ARIES recovery tests (A-H) passed successfully!
+
+tests passed: 8
+tests failed: 0
+RESULT: PASS — every ARIES verification test recovered the expected state.

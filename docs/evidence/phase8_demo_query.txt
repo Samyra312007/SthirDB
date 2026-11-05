@@ -1,0 +1,56 @@
+=== SthirDB demo: SQL subset (joins, NULLs, aggregates) ===
+
+-- a plain projection with a predicate
+   SELECT Name FROM Emp WHERE Salary > 500
++-------+
+| Name  |
++-------+
+| Asha  |
+| Bilal |
++-------+
+(2 row(s))
+PASS  predicate rows  (2)
+
+-- an inner join across two tables
+   SELECT Emp.Name, Dept.DeptName FROM Emp JOIN Dept ON Emp.DeptID = Dept.DeptID WHERE Salary > 600
++-------+-------------+
+| Name  | DeptName    |
++-------+-------------+
+| Asha  | Engineering |
+| Bilal | Engineering |
++-------+-------------+
+(2 row(s))
+PASS  join rows  (3)
+
+-- IS NULL finds the row with no department
+   SELECT Name FROM Emp WHERE DeptID IS NULL
++------+
+| Name |
++------+
+| Dana |
++------+
+(1 row(s))
+PASS  null rows  (1)
+
+-- aggregates
+   SELECT COUNT(*), SUM(Salary), MIN(Salary), MAX(Salary), AVG(Salary) FROM Emp
++----------+-------------+-------------+-------------+-------------+
+| COUNT(*) | SUM(Salary) | MIN(Salary) | MAX(Salary) | AVG(Salary) |
++----------+-------------+-------------+-------------+-------------+
+| 4        | 2500.00     | 400         | 900         | 625.00      |
++----------+-------------+-------------+-------------+-------------+
+(1 row(s))
+PASS  sum of salaries  (2500.00)
+
+-- grouping with a join
+   SELECT Dept.DeptName, COUNT(*), SUM(Emp.Salary) FROM Emp JOIN Dept ON Emp.DeptID = Dept.DeptID GROUP BY Dept.DeptName ORDER BY Dept.DeptName
++-------------+----------+-------------+
+| DeptName    | COUNT(*) | SUM(Salary) |
++-------------+----------+-------------+
+| Engineering | 2        | 1600.00     |
+| Sales       | 1        | 500.00      |
++-------------+----------+-------------+
+(2 row(s))
+PASS  groups  (2)
+
+RESULT: PASS — 5/5 asserted queries returned the expected answers.
